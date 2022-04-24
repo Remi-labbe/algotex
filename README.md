@@ -1,1 +1,1 @@
-# algotex
+# Algotex
