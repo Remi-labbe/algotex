@@ -10,25 +10,44 @@ LDFLAGS=-lfl
 LEXOPTS=-D_POSIX_SOURCE -DYY_NO_INPUT --nounput
 YACCOPTS=
 
-PROG=algo2asm
+EXECS=algo2asm run
 
-$(PROG): lex.yy.o $(PROG).tab.o stable.o
+### algo2asm
+
+algo2asm: algo2asm.lex.o algo2asm.tab.o stable.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
-lex.yy.c: $(PROG).l $(PROG).tab.h
-	$(LEX) $(LEXOPTS) $<
-
-lex.yy.h: $(PROG).l
-	$(LEX) $(LEXOPTS) --header-file=$@ $<
-
-$(PROG).tab.c $(PROG).tab.h: $(PROG).y lex.yy.h
+algo2asm.tab.c algo2asm.tab.h: algo2asm.y algo2asm.lex.h
 	$(YACC) $(YACCOPTS) $< -d -v
 	# $(YACC) $(YACCOPTS) $< -d -v --graph
+
+algo2asm.lex.c: algo2asm.l algo2asm.tab.h
+	$(LEX) $(LEXOPTS) -o $@ $<
+
+algo2asm.lex.h: algo2asm.l
+	$(LEX) $(LEXOPTS) --header-file=$@ $<
+
+### run
+
+run: run.lex.o run.tab.o
+	$(CC) $+ -o $@ $(LDFLAGS)
+
+run.tab.c run.tab.h: run.y run.lex.h
+	$(YACC) $(YACCOPTS) $< -d -v
+	# $(YACC) $(YACCOPTS) $< -d -v --graph
+
+run.lex.c: run.l run.tab.h
+	$(LEX) $(LEXOPTS) -o $@ $<
+
+run.lex.h: run.l
+	$(LEX) $(LEXOPTS) --header-file=$@ $<
+
+### others
 
 %.o: %.c
 	$(CC) -DYYDEBUG $(CFLAGS) $< -c
 
-all: $(PROG)
+all: $(EXECS)
 
 clean:
-	$(RM) $(PROG) *.o lex.yy.* $(PROG).tab.* *.err *.output *.out *.dot
+	$(RM) $(EXECS) *.o *.lex.* *.tab.* *.err *.output *.out *.dot
