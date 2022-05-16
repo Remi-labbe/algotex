@@ -14,7 +14,7 @@ EXECS=algo2asm run
 
 ### algo2asm
 
-algo2asm: algo2asm.lex.o algo2asm.tab.o stable.o
+algo2asm: algo2asm.lex.o algo2asm.tab.o stable.o stack.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
 algo2asm.tab.c algo2asm.tab.h: algo2asm.y algo2asm.lex.h
@@ -29,7 +29,7 @@ algo2asm.lex.h: algo2asm.l
 
 ### run
 
-run: run.lex.o run.tab.o
+run: run.lex.o run.tab.o stack.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
 run.tab.c run.tab.h: run.y run.lex.h
@@ -43,6 +43,8 @@ run.lex.h: run.l
 	$(LEX) $(LEXOPTS) --header-file=$@ $<
 
 ### others
+
+stack.o: stack.h stack.c
 
 %.o: %.c
 	$(CC) -DYYDEBUG $(CFLAGS) $< -c
