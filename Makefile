@@ -12,6 +12,8 @@ YACCOPTS=
 
 EXECS=algo2asm run
 
+all: $(EXECS)
+
 ### algo2asm
 
 algo2asm: algo2asm.lex.o algo2asm.tab.o stable.o stack.o
@@ -49,7 +51,5 @@ stack.o: stack.h stack.c
 %.o: %.c
 	$(CC) -DYYDEBUG $(CFLAGS) $< -c
 
-all: $(EXECS)
-
 clean:
-	$(RM) $(EXECS) *.o *.lex.* *.tab.* *.err *.output *.out *.dot
+	$(RM) $(EXECS) *.o *.lex.* lex.yy.c *.tab.* *.err *.output *.out *.dot
