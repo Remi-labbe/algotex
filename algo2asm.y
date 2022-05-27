@@ -8,28 +8,19 @@
   #include <stdio.h>
   #include <stdarg.h>
   #include <limits.h>
-  #include "status.h"
-  #include "types.h"
-  #include "stable.h"
   #include <fcntl.h>
   #include <unistd.h>
   #include <string.h>
-  #define COMPATIBLES(a,b) ( \
-              (a == INT_T && b == INT) \
-              || (a == BOOL_T && b == BOOL) \
-              )
-  // Stack [[
-  void push(unsigned int n);
-  unsigned int pop();
-  unsigned int top();
-  #define STACK_CAPACITY 50
-  static int stack[STACK_CAPACITY];
-  static size_t stack_size = 0;
-  // ]]
+  #include "status.h"
+  #include "types.h"
+  #include "stable.h"
+  #include "stack.h"
+
   int yylex(void);
   void yyerror(char const *);
+  void free_symbols();
   void fail_with(const char *format, ...);
-  void print(status s);
+  void true_from_positive();
   // Variables labels [[
   static unsigned int new_label_number() {
     static unsigned int current_label_number = 0u;
@@ -56,13 +47,12 @@
 %union {
   int integer;
   char id[64];
-  char str[512];
   status s;
 }
-%type<s> expr prog inst block_inst
-%token IF FI ELSE DOWHILE OD DO WHILEOD
-%token INCR DECR
-%token<str> STRING
+%type<s> expr func inst linst dofori_b doford_b algo_b
+%token ALGO_B ALGO_E
+%token IF FI ELSE DOFORI DOFORD DOWHILE OD DO WHILEOD RETURN IGNORE
+%token INCR DECR TIMES
 %token<id> ID
 %token<integer> NUMBER
 %token TRUE FALSE AND OR NOT EQ NEQ LTH GTH LEQ GEQ
@@ -71,21 +61,61 @@
 %left AND
 %left EQ NEQ LTH GTH LEQ GEQ
 %left '+' '-'
-%left '*' '/'
+%left '*' TIMES '/'
 %right UNOT
 %right UMINUS
-%start prog
+%start func
 %%
 
-prog:
-  %empty
-| inst prog
+func:
+algo_b '{' lparams '}' linst algo_e {
+  $$ = STATEMENT;
+}
 ;
 
-block_inst:
-  %empty
-| error block_inst { yyerrok; }
-| inst block_inst {
+algo_b:
+ALGO_B '{' ID '}' {
+  curr_fun = new_symbol_table_entry($3);
+  curr_fun->class = FUNCTION;
+  curr_fun->nParams = 0;
+  curr_fun->desc[0] = INT_T;
+  dprintf(fd, ":%s\n", $3);
+}
+;
+
+lparams:
+%empty
+| id ',' lparams
+| id
+;
+
+id:
+ID {
+  if (search_symbol_table($1) != NULL) {
+    fail_with("%s already exist: duplicated variable.\n", $1);
+  }
+  symbol_table_entry *ste = new_symbol_table_entry($1);
+  ste->add = ++curr_fun->nParams;
+  curr_fun->desc[ste->add] = INT_T;
+  ste->class = PARAMETER;
+  ste->desc[0] = INT_T;
+}
+;
+
+algo_e:
+ALGO_E {
+  // DO THAT AFTER CALL
+  for(size_t i = 0; i < curr_fun->nParams; i++) {
+    free_first_symbol_table_entry();
+  }
+}
+;
+
+linst:
+  inst { $$ = STATEMENT; }
+| error { yyerrok; }
+| error linst { yyerrok; }
+| inst linst {
   $$ = STATEMENT;
 }
 ;
@@ -99,28 +129,32 @@ AFFECT '{' ID '}' '{' expr '}' {
     if ((ste = search_symbol_table($3)) == NULL) {
       $$ = STATEMENT;
       symbol_table_entry *ste = new_symbol_table_entry($3);
-      ste->class = GLOBAL_VARIABLE;
-      switch($6) {
-      case INT:
-        ste->desc[0] = INT_T;
-        break;
-      case BOOL:
-        ste->desc[0] = BOOL_T;
-        break;
-        default:;
-      }
-      dprintf(fd, "\tconst ax,var:%s\n", $3);
-      dprintf(fd, "\tpop bx\n"
-                  "\tstorew bx,ax\n");
+      ste->class = LOCAL_VARIABLE;
+      ste->add = ++curr_fun->nLocalVariables;
+      ste->desc[0] = INT_T;
     } else {
-      if (COMPATIBLES (ste->desc[0], $6)) {
-        $$ = STATEMENT;
-        dprintf(fd, "\tconst ax,var:%s\n", $3);
-        dprintf(fd, "\tpop bx\n"
-                    "\tstorew bx,ax\n");
-      } else {
-        $$ = ERR_TYP;
+      $$ = STATEMENT;
+      dprintf(fd, "\tpop ax\n");
+      int delta;
+      switch(ste->class) {
+        case PARAMETER:
+          // sp − 2(n + m − (i − 1))
+          delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+          dprintf(fd, "\tcp cx,sp\n"
+                      "\tconst bx,%d\n", delta);
+          dprintf(fd, "\tsub cx,bx\n");
+          break;
+        case LOCAL_VARIABLE:
+          // sp − 2(m − (i − 1))
+          delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+          dprintf(fd, "\tcp cx,sp\n"
+                      "\tconst bx,%d\n", delta);
+          dprintf(fd, "\tsub cx,bx\n");
+          break;
+        default:
+          fail_with("invalid class on %s\n", ste->name);
       }
+      dprintf(fd, "\tstorew ax,cx\n");
     }
   }
 }
@@ -129,16 +163,31 @@ AFFECT '{' ID '}' '{' expr '}' {
   if ((ste = search_symbol_table($3)) == NULL) {
     $$ = ERR_DEC;
   } else {
-    if (ste->desc[0] == INT_T) {
-      $$ = INT;
-      dprintf(fd, "\tconst bx,var:%s\n", $3);
-      dprintf(fd, "\tloadw ax,bx\n"
-                  "\tconst cx,1\n"
-                  "\tadd ax,cx\n"
-                  "\tstorew ax,bx\n");
-    } else {
-      $$ = ERR_TYP;
+    $$ = INT;
+    int delta;
+    switch(ste->class) {
+      case PARAMETER:
+        // sp − 2(n + m − (i − 1))
+        delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n"
+                    "\tloadw ax,cx\n");
+        break;
+      case LOCAL_VARIABLE:
+        // sp − 2(m − (i − 1))
+        delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n"
+                    "\tloadw ax,cx\n");
+        break;
+      default:
+        fail_with("invalid class on %s\n", ste->name);
     }
+    dprintf(fd, "\tconst bx,1\n"
+                "\tadd ax,bx\n"
+                "\tstorew ax,cx\n");
   }
 }
 | DECR '{' ID '}' {
@@ -146,53 +195,82 @@ AFFECT '{' ID '}' '{' expr '}' {
   if ((ste = search_symbol_table($3)) == NULL) {
     $$ = ERR_DEC;
   } else {
-    if (ste->desc[0] == INT_T) {
-      $$ = INT;
-      dprintf(fd, "\tconst bx,var:%s\n", $3);
-      dprintf(fd, "\tloadw ax,bx\n"
-                  "\tconst cx,1\n"
-                  "\tsub ax,cx\n"
-                  "\tstorew ax,bx\n");
-    } else {
-      $$ = ERR_TYP;
+    int delta;
+    switch(ste->class) {
+      case PARAMETER:
+        // sp − 2(n + m − (i − 1))
+        delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n"
+                    "\tloadw ax,cx\n");
+        break;
+      case LOCAL_VARIABLE:
+        // sp − 2(m − (i − 1))
+        delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n"
+                    "\tloadw ax,cx\n");
+        break;
+      default:
+        fail_with("invalid class on %s\n", ste->name);
     }
+    dprintf(fd, "\tconst bx,1\n"
+                "\tsub ax,bx\n"
+                "\tstorew ax,cx\n");
   }
 }
-| IF '{' expr '}' if_b block_inst if_e end FI {
+| IF '{' expr '}' if_b linst if_e end FI {
   status s = 0;
   if ((s = $3) >= ERR_TYP || (s = $6) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($3 == BOOL) {
-      $$ = STATEMENT;
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = STATEMENT;
   }
 }
-| IF '{' expr '}' if_b block_inst ELSE else_b if_e block_inst else_e end FI {
+| IF '{' expr '}' if_b linst ELSE else_b if_e linst else_e end FI {
   status s = 0;
   if ((s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($3 == BOOL) {
-      $$ = STATEMENT;
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = STATEMENT;
   }
 }
-| DOWHILE  dowhile_t '{' expr '}' dowhile_b block_inst dowhile_e end OD {
+| DOFORI dofori_b linst dofori_e end OD {
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DOFORD doford_b linst doford_e end OD {
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DOWHILE  dowhile_t '{' expr '}' dowhile_b linst dowhile_e end OD {
   status s = 0;
   if ((s = $4) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($4 == BOOL) {
-      $$ = STATEMENT;
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = STATEMENT;
   }
+}
+| RETURN '{' expr '}' {
+    dprintf(fd, "\tpop ax\n");
+    for (size_t i = 0; i < curr_fun->nLocalVariables; i++) {
+      free_first_symbol_table_entry();
+      dprintf(fd, "\tpop dx\n");
+    }
+    dprintf(fd, "\tret\n");
+}
+| IGNORE {
+  $$ = STATEMENT;
 }
 ;
 
@@ -231,6 +309,138 @@ else_e: %empty {
   char nlabel[LABEL_SIZE] = {0};
   create_label(nlabel, LABEL_SIZE, "j_else%u", n);
   dprintf(fd, ":%s\n", nlabel);
+}
+;
+
+dofori_b: '{' ID '}' '{' expr '}' '{' expr '}' {
+  if ($5 >= ERR_TYP) {
+    $$ = $5;
+  } else if ($5 != INT) {
+    $$ = ERR_TYP;
+  } else {
+    if (search_symbol_table($2) != NULL) {
+      $$ = ERR_DEC;
+    } else {
+      $$ = STATEMENT;
+
+      symbol_table_entry *ste = new_symbol_table_entry($2);
+      ste->class = LOCAL_VARIABLE;
+      ste->add = ++curr_fun->nLocalVariables;
+      ste->desc[0] = INT_T;
+
+      push(new_label_number());
+      unsigned int n = top();
+      char label_start[LABEL_SIZE] = {0};
+      create_label(label_start, LABEL_SIZE, "dofori_s%u", n);
+      char label_loop[LABEL_SIZE] = {0};
+      create_label(label_loop, LABEL_SIZE, "dofori_l%u", n);
+      char label_next[LABEL_SIZE] = {0};
+      create_label(label_next, LABEL_SIZE, "dofori_n%u", n);
+
+      dprintf(fd, "; fori start\n");
+
+      dprintf(fd, "\tpop dx\n"
+                  "\tconst cx,%s\n", label_start);
+      dprintf(fd, "\tjmp cx\n"
+                  ":%s\n", label_loop);
+
+      // ++
+
+      int delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n"
+                  "\tconst bx,1\n"
+                  "\tadd ax,bx\n"
+                  "\tstorew ax,cx\n");
+      dprintf(fd, ":%s\n", label_start);
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      dprintf(fd, "\tconst bx,%s\n", label_next);
+      dprintf(fd, "\tsless dx,ax\n"
+                  "\tjmpc bx\n");
+    }
+  }
+}
+;
+
+doford_b: '{' ID '}' '{' expr '}' '{' expr '}' {
+        // NOT WORKING !!!!
+  if ($5 >= ERR_TYP) {
+    $$ = $5;
+  } else if ($5 != INT) {
+    $$ = ERR_TYP;
+  } else {
+    if (search_symbol_table($2) != NULL) {
+      $$ = ERR_DEC;
+    } else {
+      $$ = STATEMENT;
+      symbol_table_entry *ste = new_symbol_table_entry($2);
+      ste->class = LOCAL_VARIABLE;
+      ste->add = ++curr_fun->nLocalVariables;
+      ste->desc[0] = INT_T;
+
+      push(new_label_number());
+      unsigned int n = top();
+      char label_start[LABEL_SIZE] = {0};
+      create_label(label_start, LABEL_SIZE, "doford_s%u", n);
+      char label_loop[LABEL_SIZE] = {0};
+      create_label(label_loop, LABEL_SIZE, "doford_l%u", n);
+      char label_next[LABEL_SIZE] = {0};
+      create_label(label_next, LABEL_SIZE, "doford_n%u", n);
+
+      dprintf(fd, "\tpop dx\n"
+                  "\tconst cx,%s\n", label_start);
+      dprintf(fd, "\tjmp cx\n"
+                  ":%s\n", label_loop);
+
+      // --
+
+      int delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+
+      dprintf(fd, "\tcp cx,bp\n"
+                  "\tconst bx,%d\n", delta);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n"
+                  "\tconst bx,1\n"
+                  "\tsub ax,bx\n"
+                  "\tstorew ax,cx\n");
+      dprintf(fd, ":%s\n", label_start);
+      dprintf(fd, "\tconst bx,%s\n", label_next);
+      dprintf(fd, "\tsless dx,ax\n"
+                  "\tjmpc bx\n");
+    }
+  }
+}
+;
+
+dofori_e: %empty {
+  unsigned int n = top();
+  char label_loop[LABEL_SIZE] = {0};
+  create_label(label_loop, LABEL_SIZE, "dofori_l%u", n);
+  char label_next[LABEL_SIZE] = {0};
+  create_label(label_next, LABEL_SIZE, "dofori_n%u", n);
+  dprintf(fd, "\tconst ax,%s\n", label_loop);
+  dprintf(fd, "\tjmp ax\n"
+              ":%s\n", label_next);
+
+  dprintf(fd, "; fori end\n");
+}
+;
+
+doford_e: %empty {
+  unsigned int n = top();
+  char label_loop[LABEL_SIZE] = {0};
+  create_label(label_loop, LABEL_SIZE, "doford_l%u", n);
+  char label_next[LABEL_SIZE] = {0};
+  create_label(label_next, LABEL_SIZE, "doford_n%u", n);
+  dprintf(fd, "\tconst ax,%s\n", label_loop);
+  dprintf(fd, "\tjmp ax\n"
+              ":%s\n", label_next);
 }
 ;
 
@@ -278,18 +488,29 @@ ID {
   if (ste == NULL) {
     $$ = ERR_DEC;
   } else {
-    switch (ste->desc[0]){
-    case INT_T:
-      $$ = INT;
-      break;
-    case BOOL_T:
-      $$ = BOOL;
-      break;
-    default:;
+    $$ = INT;
+    int delta;
+    switch(ste->class) {
+      case PARAMETER:
+        // sp − 2(n + m − (i − 1))
+        delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n"
+                    "\tloadw ax,cx\n");
+        break;
+      case LOCAL_VARIABLE:
+        // sp − 2(m − (i − 1))
+        delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n"
+                    "\tloadw ax,cx\n");
+        break;
+      default:
+        fail_with("invalid class on %s\n", ste->name);
     }
-    dprintf(fd, "\tconst bx,var:%s\n", $1);
-    dprintf(fd, "\tloadw ax,bx\n"
-                "\tpush ax\n");
+    dprintf(fd, "\tpush ax\n");
   }
 }
 | NUMBER {
@@ -300,12 +521,12 @@ ID {
 | TRUE {
   dprintf(fd, "\tconst ax,1\n"
               "\tpush ax\n");
-  $$ = BOOL;
+  $$ = INT;
 }
 | FALSE {
   dprintf(fd, "\tconst ax,0\n"
               "\tpush ax\n");
-  $$ = BOOL;
+  $$ = INT;
 }
 | '(' expr ')' {
   $$ = $2;
@@ -315,15 +536,11 @@ ID {
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($1 == INT && $3 == INT) {
-      $$ = INT;
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tadd ax,bx\n"
-                  "\tpush ax\n");
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tadd ax,bx\n"
+                "\tpush ax\n");
   }
 }
 | expr '-' expr {
@@ -347,15 +564,23 @@ ID {
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($1 == INT && $3 == INT) {
-      $$ = INT;
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tmul ax,bx\n"
-                  "\tpush ax\n");
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tmul ax,bx\n"
+                "\tpush ax\n");
+  }
+}
+| expr TIMES expr {
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tmul ax,bx\n"
+                "\tpush ax\n");
   }
 }
 | expr '/' expr {
@@ -363,69 +588,51 @@ ID {
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($1 == INT && $3 == INT) {
-      if ($3 == 0) {
-        $$ = ERR_DIV;
-      } else {
-        $$ = INT;
-      }
-      dprintf(fd, "\tpop bx\n"
-                  "\tpop cx\n"
-                  "\tconst ax,diverr\n"
-                  "\tconst dx,error\n"
-                  "\tdiv cx,bx\n"
-                  "\tjmpe dx\n"
-                  "\tpush cx\n");
+    if ($3 == 0) {
+      $$ = ERR_DIV;
     } else {
-      $$ = ERR_TYP;
+      $$ = INT;
     }
+    dprintf(fd, "\tpop bx\n"
+                "\tpop cx\n"
+                "\tconst ax,diverr\n"
+                "\tconst dx,error\n"
+                "\tdiv cx,bx\n"
+                "\tjmpe dx\n"
+                "\tpush cx\n");
   }
 }
 | '-' expr %prec UMINUS {
   if ($2 >= ERR_TYP) {
     $$ = $2;
   } else {
-    if ( $2 == INT ) {
-      $$ = INT;
-      dprintf(fd, "\tpop ax\n"
-                  "\tconst bx,-1\n"
-                  "\tmul ax,bx\n"
-                  "\tpush ax\n");
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tconst bx,-1\n"
+                "\tmul ax,bx\n"
+                "\tpush ax\n");
   }
 }
 | expr AND expr {
   status s = 0;
-  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($1 == BOOL && $3 == BOOL) {
-      $$ = BOOL;
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tand ax,bx\n"
-                  "\tpush ax\n");
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    true_from_positive();
+    dprintf(fd, "\tand ax,bx\n"
+                "\tpush ax\n");
   }
 }
 | expr OR expr {
   status s = 0;
-  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if ($1 == BOOL && $3 == BOOL) {
-      $$ = BOOL;
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tor ax,bx\n"
-                  "\tpush ax\n");
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    true_from_positive();
+    dprintf(fd, "\tor ax,bx\n"
+                "\tpush ax\n");
   }
 }
 | expr EQ expr {
@@ -433,29 +640,25 @@ ID {
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if (($1 == BOOL && $3 == BOOL) || ($1 == INT && $3 == INT)) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tcmp ax,bx\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,0\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,1\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 | expr NEQ expr {
@@ -463,29 +666,25 @@ ID {
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if (($1 == BOOL && $3 == BOOL) || ($1 == INT && $3 == INT)) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tcmp ax,bx\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,1\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,0\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,1\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,0\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 | expr LTH expr {
@@ -493,29 +692,25 @@ ID {
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if (($1 == BOOL && $3 == BOOL) || ($1 == INT && $3 == INT)) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tsless bx,ax\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,0\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,1\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless bx,ax\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 | expr LEQ expr {
@@ -523,31 +718,27 @@ ID {
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if (($1 == BOOL && $3 == BOOL) || ($1 == INT && $3 == INT)) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tsless bx,ax\n"
-                  "\tjmpc dx\n"
-                  "\tcmp ax,bx\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,0\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,1\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless bx,ax\n"
+                "\tjmpc dx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 | expr GTH expr {
@@ -555,29 +746,25 @@ ID {
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if (($1 == BOOL && $3 == BOOL) || ($1 == INT && $3 == INT)) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tsless ax,bx\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,0\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,1\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 | expr GEQ expr {
@@ -585,64 +772,79 @@ ID {
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
   } else {
-    if (($1 == BOOL && $3 == BOOL) || ($1 == INT && $3 == INT)) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tpop bx\n"
-                  "\tsless ax,bx\n"
-                  "\tjmpc dx\n"
-                  "\tcmp ax,bx\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,0\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,1\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless ax,bx\n"
+                "\tjmpc dx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 | NOT expr %prec UNOT {
   if ($2 >= ERR_TYP) {
     $$ = $2;
   } else {
-    if ( $2 == BOOL ) {
-      $$ = BOOL;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tconst dx,%s\n", tlabel);
-      dprintf(fd, "\tconst cx,%s\n", nlabel);
-      dprintf(fd, "\tpop ax\n"
-                  "\tconst bx,1\n"
-                  "\tcmp bx,ax\n"
-                  "\tjmpc dx\n"
-                  "\tconst ax,1\n"
-                  "\tpush ax\n"
-                  "\tjmp cx\n");
-      dprintf(fd, ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,0\n"
-                  "\tpush ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-    } else {
-      $$ = ERR_TYP;
-    }
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tconst bx,1\n"
+                "\tcmp bx,ax\n"
+                "\tjmpc dx\n"
+                "\tconst ax,1\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,0\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
   }
 }
 ;
 %%
+
+void true_from_positive() {
+  int n = new_label_number();
+  char label1[LABEL_SIZE] = {0};
+  create_label(label1, LABEL_SIZE, "jmp%u", n);
+  dprintf(fd, "\tpop ax\n"
+              "\tconst dx,%s\n", label1);
+  dprintf(fd, "\tconst cx,0\n"
+              "\tcmp ax,cx\n"
+              "\tjmpc dx\n"
+              "\tconst ax,1\n"
+              ":%s\n", label1);
+  n = new_label_number();
+  char label2[LABEL_SIZE] = {0};
+  create_label(label2, LABEL_SIZE, "jmp%u", n);
+  dprintf(fd, "\tpop bx\n"
+              "\tconst dx,%s\n", label2);
+  dprintf(fd, "\tconst cx,0\n"
+              "\tcmp bx,cx\n"
+              "\tjmpc dx\n"
+              "\tconst bx,1\n"
+              ":%s\n", label2);
+}
 
 void yyerror(char const *s) {
   fprintf(stderr, "%s\n", s);
@@ -653,113 +855,19 @@ void fail_with(const char *format, ...) {
   va_start(ap, format);
   vfprintf(stderr, format, ap);
   va_end(ap);
+  free_symbols();
   exit(EXIT_FAILURE);
 }
 
-void print(status s) {
-  switch(s) {
-    case ERR_DIV:
-      yyerror("Division par 0");
-      dprintf(fd, "\tconst ax,diverr\n"
-                  "\tconst bx,error\n"
-                  "\tjmpe bx\n");
-      break;
-    case ERR_TYP:
-      yyerror("Conflit de types");
-      dprintf(fd, "\tconst ax,typerr\n"
-                  "\tconst bx,error\n"
-                  "\tjmpe bx\n");
-      break;
-    case ERR_DEC:
-      yyerror("Erreur variable.");
-      dprintf(fd, "\tconst ax,decerr\n"
-                  "\tconst bx,error\n"
-                  "\tjmpe bx\n");
-      break;
-    case INT:
-      dprintf(fd, "\tcp ax,sp\n"
-                  "\tcallprintfd ax\n");
-      break;
-    case BOOL:;
-      int n = new_label_number();
-      char tlabel[LABEL_SIZE] = {0};
-      create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
-      char nlabel[LABEL_SIZE] = {0};
-      create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
-      dprintf(fd, "\tpop ax\n"
-                  "\tconst bx,1\n");
-      dprintf(fd, "\tconst cx,%s\n", tlabel);
-      dprintf(fd, "\tcmp ax,bx\n"
-                  "\tjmpc cx\n"
-                  "\tconst ax,fout\n"
-                  "\tcallprintfs ax\n"
-                  "\tconst bx,%s\n", nlabel);
-      dprintf(fd, "\tjmp bx\n"
-                  ":%s\n", tlabel);
-      dprintf(fd, "\tconst ax,tout\n"
-                  "\tcallprintfs ax\n");
-      dprintf(fd, ":%s\n", nlabel);
-      break;
-    case STATEMENT:
-      break;
-    default:
-      yyerror("ERROR!");
-  }
-
-}
-
-void print_vars() {
-  dprintf(fd, "; Vars\n");
-  symbol_table_entry *ste;
-  for ( ste = symbol_table_head(); ste!=NULL; ste = ste->next){
-    dprintf(fd, ":var:%s\n@%s 0\n", ste->name, "int");
-  }
-}
-
-void free_vars() {
+void free_symbols() {
   while (symbol_table_head() != NULL) {
     free_first_symbol_table_entry();
   }
 }
 
-void print_header() {
-  dprintf(fd,
-        "; Calculette\n\n"
-        "\tconst ax,debut\n"
-        "\tjmp ax\n\n"
-        ":diverr\n"
-        "@string \"Erreur: division par 0\\n\"\n"
-        ":typerr\n"
-        "@string \"Erreur: types incompatibles\\n\"\n"
-        ":decerr\n"
-        "@string \"Erreur: variable redeclaree\\n\"\n"
-        ":tout\n"
-        "@string \"true\"\n"
-        ":fout\n"
-        "@string \"false\"\n\n"
-        ":error\n"
-        "\tcallprintfs ax\n"
-        "\tconst ax,end\n"
-        "\tjmp ax\n\n"
-        ":debut\n"
-        "; Préparation de la pile\n"
-        "\tconst bp,pile\n"
-        "\tconst sp,pile\n"
-        "\tconst ax,2\n"
-        "\tsub sp,ax\n"
-  );
-}
-
-void print_footer() {
-  dprintf(fd, "; La zone de la pile\n"
-              ":pile\n"
-              "@int 0\n"
-  );
-}
-
 int main(int argc, char **argv) {
   if (argc != 2) {
-    fail_with("usage: %s [sample.tex]", argv[0]);
+    fail_with("usage: %s sample.tex", argv[0]);
   }
   yyin = fopen(argv[1], "r");
   if (yyin == NULL) {
@@ -775,40 +883,7 @@ int main(int argc, char **argv) {
     fail_with("couldn't create file: %s", argv[1]);
     exit(EXIT_FAILURE);
   }
-  print_header();
   yyparse();
-  dprintf(fd,
-        ":end\n"
-        "\tend\n\n"
-  );
-  print_vars();
-  free_vars();
-  print_footer();
+  free_symbols();
   return 0;
-}
-
-void push(unsigned int n) {
-  if (stack_size < STACK_CAPACITY) {
-    stack[stack_size++] = n;
-  } else {
-    yyerror("stack full.");
-  }
-}
-
-unsigned int top() {
-  if (stack_size > 0) {
-    return stack[stack_size - 1];
-  } else {
-    yyerror("stack empty.");
-    return 0;
-  }
-}
-
-unsigned int pop() {
-  if (stack_size > 0) {
-    return stack[--stack_size];
-  } else {
-    yyerror("stack empty.");
-    return 0;
-  }
 }

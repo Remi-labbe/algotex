@@ -28,7 +28,7 @@
 typedef enum { VOID_T,
 	       INT_T, BOOL_T, STRING_T,
 	       INT_T_LVALUE, BOOL_T_LVALUE, STRING_T_LVALUE } symbol_type;
-typedef enum { GLOBAL_VARIABLE, LOCAL_VARIABLE, FUNCTION } symbol_class;
+typedef enum { GLOBAL_VARIABLE, LOCAL_VARIABLE, PARAMETER, FUNCTION } symbol_class;
 
 #define COMPATIBLE_TYPES(a,b) ( ((a)==(b))			 \
 				|| ((a)==INT_T&&(b)==INT_T_LVALUE)	\

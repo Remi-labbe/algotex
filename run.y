@@ -1,5 +1,8 @@
 %{
   #define _POSIX_C_SOURCE 200809L
+  // COMPILE AND RUN ?
+  #define COMPILE_AND_RUN 1 // comment this line to not compile and run
+  //
   #ifndef LABEL_SIZE
   #define LABEL_SIZE 128
   #endif // LABEL_SIZE
@@ -8,10 +11,11 @@
   #include <stdio.h>
   #include <stdarg.h>
   #include <limits.h>
-  #include "status.h"
   #include <fcntl.h>
   #include <unistd.h>
   #include <string.h>
+  #include <sys/wait.h>
+  #include "status.h"
   #include "stack.h"
   int yylex(void);
   typedef struct yy_buffer_state * YY_BUFFER_STATE;
@@ -29,6 +33,7 @@
 
   extern FILE *yyin;
   static int fd;
+  static char *target_name;
 %}
 %union {
   int integer;
@@ -48,7 +53,10 @@
 call: SIPRO '{' id '}' '{' lparams '}' {
   dprintf(fd, "\tconst ax,%s\n", $3);
   dprintf(fd, "\tcall ax\n");
+  dprintf(fd, "\tpush ax\n"
+              "\tcp ax,sp\n");
   dprintf(fd, "\tcallprintfd ax\n");
+  dprintf(fd, "\tpop ax\n");
   size_t n = pop();
   for(size_t i = 0; i < n; ++i) {
     dprintf(fd, "\tpop dx\n");
@@ -58,7 +66,6 @@ call: SIPRO '{' id '}' '{' lparams '}' {
         "\tend\n\n"
   );
   print_footer();
-  printf("Created %s_main.asm\n", $3);
 }
 ;
 
@@ -71,13 +78,14 @@ id: ID {
     fail_with("Invalid file: [%s]", fun_file_name);
   }
   size_t fnlen = strlen($1);
-  char target[fnlen + PATTERN_LEN_ADD];
-  strncpy(target, $1, fnlen);
-  strncpy(target + fnlen, PATTERN, strlen(PATTERN) + 1);
-  fd = open(target, O_RDWR | O_CREAT | O_TRUNC, S_IWUSR | S_IRUSR);
+  target_name = malloc(fnlen + PATTERN_LEN_ADD);
+  memset(target_name, 0, fnlen + PATTERN_LEN_ADD);
+  strncpy(target_name, $1, fnlen);
+  strncpy(target_name + fnlen, PATTERN, strlen(PATTERN) + 1);
+  fd = open(target_name, O_RDWR | O_CREAT | O_TRUNC, S_IWUSR | S_IRUSR);
   if (fd == -1) {
     perror("open");
-    fail_with("couldn't create file: %s", target);
+    fail_with("couldn't create file: %s", target_name);
     exit(EXIT_FAILURE);
   }
   print_header();
@@ -88,13 +96,8 @@ id: ID {
       fail_with("error writing function.\n");
     }
   }
-  dprintf(fd, "\n"
-              "; function end\n\n"
-              );
-  // function result is stored in ax
   print_main();
   push(0);
-
 }
 
 lparams:
@@ -117,12 +120,12 @@ NUMBER {
 | TRUE {
   dprintf(fd, "\tconst ax,1\n"
               "\tpush ax\n");
-  $$ = BOOL;
+  $$ = INT;
 }
 | FALSE {
   dprintf(fd, "\tconst ax,0\n"
               "\tpush ax\n");
-  $$ = BOOL;
+  $$ = INT;
 }
 | '(' expr ')' {
   $$ = $2;
@@ -175,6 +178,9 @@ void yyerror(char const *s) {
 
 void fail_with(const char *format, ...) {
   va_list ap;
+  if(target_name != NULL) {
+    free(target_name);
+  }
   va_start(ap, format);
   vfprintf(stderr, format, ap);
   va_end(ap);
@@ -198,7 +204,7 @@ void print_header() {
 }
 
 void print_main() {
-  dprintf(fd, ":main\n"
+  dprintf(fd, "\n:main\n"
         "; Préparation de la pile\n"
         "\tconst bp,pile\n"
         "\tconst sp,pile\n"
@@ -221,5 +227,66 @@ int main(int argc, char **argv) {
   YY_BUFFER_STATE buffer = yy_scan_string(argv[1]);
   yyparse();
   yy_delete_buffer(buffer);
+#ifdef COMPILE_AND_RUN
+  int status;
+  char compiled_name[128] = {0};
+  strncpy(compiled_name, target_name, strlen(target_name) - PATTERN_LEN_ADD);
+  switch(fork()) {
+  case -1:
+    fail_with("error first fork.\n");
+  case 0:;
+    char *argv[4];
+    char *asipro = "asipro";
+    argv[0] = asipro;
+    argv[1] = target_name;
+    argv[2] = compiled_name;
+    argv[3] = NULL;
+
+    int fdnull = open("/dev/null", O_RDWR);
+    if (fdnull == -1) {
+      fail_with("open\n");
+    }
+    if (dup2(fdnull, STDERR_FILENO) == -1) {
+      fail_with("dup2\n");
+    }
+    if (close(fdnull) == -1) {
+      fail_with("close\n");
+    }
+
+    execvp(argv[0], argv);
+    exit(EXIT_FAILURE);
+  default:
+    wait(&status);
+    break;
+  }
+  // Checking if exec was successful
+  if (WEXITSTATUS(status) == EXIT_FAILURE) {
+    fail_with("failure status first fork\n");
+  }
+
+  status = EXIT_SUCCESS;
+
+  switch(fork()) {
+  case -1:
+    fail_with("error second fork.\n");
+  case 0:;
+    char *argv[3];
+    char *sipro = "sipro";
+    argv[0] = sipro;
+    argv[1] = compiled_name;
+    argv[2] = NULL;
+    execvp(argv[0], argv);
+    exit(EXIT_FAILURE);
+  default:
+    wait(&status);
+    break;
+  }
+  if (WEXITSTATUS(status) == EXIT_FAILURE) {
+    fail_with("failure status second fork\n");
+  }
+#endif
+  if(target_name != NULL) {
+    free(target_name);
+  }
   return 0;
 }

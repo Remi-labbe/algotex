@@ -20,22 +20,28 @@ PREF "\\"
 ">="                  { return GEQ; }
 "=="                  { return EQ; }
 "!="                  { return NEQ; }
+{PREF}"times"         { return TIMES; }
 {PREF}"SET"           { return AFFECT; }
 {PREF}"IF"            { return IF; }
 {PREF}"FI"            { return FI; }
 {PREF}"ELSE"          { return ELSE; }
 {PREF}"INCR"          { return INCR; }
 {PREF}"DECR"          { return DECR; }
+{PREF}"DOFORI"        { return DOFORI; }
+{PREF}"DOFORD"        { return DOFORD; }
 {PREF}"DOWHILE"       { return DOWHILE; }
 {PREF}"OD"            { return OD; }
 {PREF}"DO"            { return DO; }
 {PREF}"WHILEOD"       { return WHILEOD; }
+{PREF}"RETURN"        { return RETURN; }
+{PREF}"begin{algo}"   { return ALGO_B; }
+{PREF}"end{algo}"     { return ALGO_E; }
+{PREF}"COM{.*}"       { return IGNORE; }
+{PREF}"IN{.*}"        { return IGNORE; }
+{PREF}"OUT{.*}"       { return IGNORE; }
+{PREF}"AUX{.*}"       { return IGNORE; }
 {NUMBER}              { string_to_int(&yylval.integer, yytext); return NUMBER; }
 {ID}                  { strncpy(yylval.id, yytext, 64); return ID; }
-\".*\"                { memset(&yylval.str, 0, 512);
-                        strncpy(yylval.str, yytext, strlen(yytext));
-                        return STRING;
-                      }
 [[:blank:]]|\n
 .                     { return yytext[0]; }
 %%
