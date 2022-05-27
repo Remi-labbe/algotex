@@ -1,5 +1,6 @@
 /*
   Copyright 2016 Nicolas Bedon
+  Copyright 2022 Remi Labbe
   This file is part of CASIPRO.
 
   CASIPRO is free software: you can redistribute it and/or modify
@@ -28,6 +29,7 @@
 typedef enum { VOID_T,
 	       INT_T, BOOL_T, STRING_T,
 	       INT_T_LVALUE, BOOL_T_LVALUE, STRING_T_LVALUE } symbol_type;
+// Addition of the parameter type to handle easily function parameters
 typedef enum { GLOBAL_VARIABLE, LOCAL_VARIABLE, PARAMETER, FUNCTION } symbol_class;
 
 #define COMPATIBLE_TYPES(a,b) ( ((a)==(b))			 \
