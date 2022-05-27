@@ -1,3 +1,10 @@
 *.asm
 *.tex
+*.o
+*.lex.*
 lex.yy.c
+*.tab.*
+*.err.*
+*.output
+*.out
+*.dot
