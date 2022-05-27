@@ -29,6 +29,7 @@
 typedef enum { VOID_T,
 	       INT_T, BOOL_T, STRING_T,
 	       INT_T_LVALUE, BOOL_T_LVALUE, STRING_T_LVALUE } symbol_type;
+// Change made here by Remi Labbe
 // Addition of the parameter type to handle easily function parameters
 typedef enum { GLOBAL_VARIABLE, LOCAL_VARIABLE, PARAMETER, FUNCTION } symbol_class;
 
