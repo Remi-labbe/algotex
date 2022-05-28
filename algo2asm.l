@@ -25,14 +25,11 @@ PREF "\\"
 {PREF}"IF"            { return IF; }
 {PREF}"FI"            { return FI; }
 {PREF}"ELSE"          { return ELSE; }
-{PREF}"INCR"          { return INCR; }
-{PREF}"DECR"          { return DECR; }
-{PREF}"DOFORI"        { return DOFORI; }
-{PREF}"DOFORD"        { return DOFORD; }
 {PREF}"DOWHILE"       { return DOWHILE; }
 {PREF}"OD"            { return OD; }
 {PREF}"DO"            { return DO; }
 {PREF}"WHILEOD"       { return WHILEOD; }
+{PREF}"CALL"          { return CALL; }
 {PREF}"RETURN"        { return RETURN; }
 {PREF}"begin{algo}"   { return ALGO_B; }
 {PREF}"end{algo}"     { return ALGO_E; }

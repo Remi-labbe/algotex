@@ -41,7 +41,7 @@
   // ]]
 
   extern FILE *yyin;
-  static int fd;
+  static int fd, offset = 0;
   symbol_table_entry *curr_fun = NULL;
 %}
 %union {
@@ -49,10 +49,10 @@
   char id[64];
   status s;
 }
-%type<s> expr func inst linst dofori_b doford_b algo_b
+%type<s> expr func inst linst algo_b call_params param
 %token ALGO_B ALGO_E
-%token IF FI ELSE DOFORI DOFORD DOWHILE OD DO WHILEOD RETURN IGNORE
-%token INCR DECR TIMES
+%token IF FI ELSE DOWHILE OD DO WHILEOD CALL RETURN IGNORE
+%token TIMES
 %token<id> ID
 %token<integer> NUMBER
 %token TRUE FALSE AND OR NOT EQ NEQ LTH GTH LEQ GEQ
@@ -104,7 +104,6 @@ ID {
 
 algo_e:
 ALGO_E {
-  // DO THAT AFTER CALL
   for(size_t i = 0; i < curr_fun->nParams; i++) {
     free_first_symbol_table_entry();
   }
@@ -132,21 +131,27 @@ AFFECT '{' ID '}' '{' expr '}' {
       ste->class = LOCAL_VARIABLE;
       ste->add = ++curr_fun->nLocalVariables;
       ste->desc[0] = INT_T;
+      --offset;
     } else {
       $$ = STATEMENT;
       dprintf(fd, "\tpop ax\n");
+      --offset;
+      printf("SET\n");
+      printf("offset set: %d\n", offset);
+      printf("nloc:%zu\n", curr_fun->nLocalVariables);
+      printf("nparams:%zu\n", curr_fun->nLocalVariables);
+      printf("add:%d\n", ste->add);
       int delta;
       switch(ste->class) {
         case PARAMETER:
-          // sp − 2(n + m − (i − 1))
-          delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+          delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+          printf("delta: %d\n", delta);
           dprintf(fd, "\tcp cx,sp\n"
                       "\tconst bx,%d\n", delta);
           dprintf(fd, "\tsub cx,bx\n");
           break;
         case LOCAL_VARIABLE:
-          // sp − 2(m − (i − 1))
-          delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+          delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
           dprintf(fd, "\tcp cx,sp\n"
                       "\tconst bx,%d\n", delta);
           dprintf(fd, "\tsub cx,bx\n");
@@ -156,69 +161,6 @@ AFFECT '{' ID '}' '{' expr '}' {
       }
       dprintf(fd, "\tstorew ax,cx\n");
     }
-  }
-}
-| INCR '{' ID '}' {
-  symbol_table_entry *ste;
-  if ((ste = search_symbol_table($3)) == NULL) {
-    $$ = ERR_DEC;
-  } else {
-    $$ = INT;
-    int delta;
-    switch(ste->class) {
-      case PARAMETER:
-        // sp − 2(n + m − (i − 1))
-        delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n"
-                    "\tloadw ax,cx\n");
-        break;
-      case LOCAL_VARIABLE:
-        // sp − 2(m − (i − 1))
-        delta = 2 * (curr_fun->nLocalVariables - (ste->add));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n"
-                    "\tloadw ax,cx\n");
-        break;
-      default:
-        fail_with("invalid class on %s\n", ste->name);
-    }
-    dprintf(fd, "\tconst bx,1\n"
-                "\tadd ax,bx\n"
-                "\tstorew ax,cx\n");
-  }
-}
-| DECR '{' ID '}' {
-  symbol_table_entry *ste;
-  if ((ste = search_symbol_table($3)) == NULL) {
-    $$ = ERR_DEC;
-  } else {
-    int delta;
-    switch(ste->class) {
-      case PARAMETER:
-        // sp − 2(n + m − (i − 1))
-        delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n"
-                    "\tloadw ax,cx\n");
-        break;
-      case LOCAL_VARIABLE:
-        // sp − 2(m − (i − 1))
-        delta = 2 * (curr_fun->nLocalVariables - (ste->add));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n"
-                    "\tloadw ax,cx\n");
-        break;
-      default:
-        fail_with("invalid class on %s\n", ste->name);
-    }
-    dprintf(fd, "\tconst bx,1\n"
-                "\tsub ax,bx\n"
-                "\tstorew ax,cx\n");
   }
 }
 | IF '{' expr '}' if_b linst if_e end FI {
@@ -237,22 +179,6 @@ AFFECT '{' ID '}' '{' expr '}' {
     $$ = STATEMENT;
   }
 }
-| DOFORI dofori_b linst dofori_e end OD {
-  status s = 0;
-  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
-    $$ = s;
-  } else {
-    $$ = STATEMENT;
-  }
-}
-| DOFORD doford_b linst doford_e end OD {
-  status s = 0;
-  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
-    $$ = s;
-  } else {
-    $$ = STATEMENT;
-  }
-}
 | DOWHILE  dowhile_t '{' expr '}' dowhile_b linst dowhile_e end OD {
   status s = 0;
   if ((s = $4) >= ERR_TYP) {
@@ -262,12 +188,14 @@ AFFECT '{' ID '}' '{' expr '}' {
   }
 }
 | RETURN '{' expr '}' {
-    dprintf(fd, "\tpop ax\n");
-    for (size_t i = 0; i < curr_fun->nLocalVariables; i++) {
-      free_first_symbol_table_entry();
-      dprintf(fd, "\tpop dx\n");
-    }
-    dprintf(fd, "\tret\n");
+  --offset;
+  printf("%d\n", offset);
+  dprintf(fd, "\tpop ax\n");
+  for (size_t i = 0; i < curr_fun->nLocalVariables; i++) {
+    free_first_symbol_table_entry();
+    dprintf(fd, "\tpop dx\n");
+  }
+  dprintf(fd, "\tret\n");
 }
 | IGNORE {
   $$ = STATEMENT;
@@ -279,6 +207,7 @@ if_b: %empty {
   unsigned int n = top();
   char nlabel[LABEL_SIZE] = {0};
   create_label(nlabel, LABEL_SIZE, "if_f%u", n);
+  --offset;
   dprintf(fd, "\tpop ax\n"
               "\tconst bx,0\n"
               "\tconst cx,%s\n", nlabel);
@@ -312,138 +241,6 @@ else_e: %empty {
 }
 ;
 
-dofori_b: '{' ID '}' '{' expr '}' '{' expr '}' {
-  if ($5 >= ERR_TYP) {
-    $$ = $5;
-  } else if ($5 != INT) {
-    $$ = ERR_TYP;
-  } else {
-    if (search_symbol_table($2) != NULL) {
-      $$ = ERR_DEC;
-    } else {
-      $$ = STATEMENT;
-
-      symbol_table_entry *ste = new_symbol_table_entry($2);
-      ste->class = LOCAL_VARIABLE;
-      ste->add = ++curr_fun->nLocalVariables;
-      ste->desc[0] = INT_T;
-
-      push(new_label_number());
-      unsigned int n = top();
-      char label_start[LABEL_SIZE] = {0};
-      create_label(label_start, LABEL_SIZE, "dofori_s%u", n);
-      char label_loop[LABEL_SIZE] = {0};
-      create_label(label_loop, LABEL_SIZE, "dofori_l%u", n);
-      char label_next[LABEL_SIZE] = {0};
-      create_label(label_next, LABEL_SIZE, "dofori_n%u", n);
-
-      dprintf(fd, "; fori start\n");
-
-      dprintf(fd, "\tpop dx\n"
-                  "\tconst cx,%s\n", label_start);
-      dprintf(fd, "\tjmp cx\n"
-                  ":%s\n", label_loop);
-
-      // ++
-
-      int delta = 2 * (curr_fun->nLocalVariables - (ste->add));
-
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n"
-                  "\tconst bx,1\n"
-                  "\tadd ax,bx\n"
-                  "\tstorew ax,cx\n");
-      dprintf(fd, ":%s\n", label_start);
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
-      dprintf(fd, "\tconst bx,%s\n", label_next);
-      dprintf(fd, "\tsless dx,ax\n"
-                  "\tjmpc bx\n");
-    }
-  }
-}
-;
-
-doford_b: '{' ID '}' '{' expr '}' '{' expr '}' {
-        // NOT WORKING !!!!
-  if ($5 >= ERR_TYP) {
-    $$ = $5;
-  } else if ($5 != INT) {
-    $$ = ERR_TYP;
-  } else {
-    if (search_symbol_table($2) != NULL) {
-      $$ = ERR_DEC;
-    } else {
-      $$ = STATEMENT;
-      symbol_table_entry *ste = new_symbol_table_entry($2);
-      ste->class = LOCAL_VARIABLE;
-      ste->add = ++curr_fun->nLocalVariables;
-      ste->desc[0] = INT_T;
-
-      push(new_label_number());
-      unsigned int n = top();
-      char label_start[LABEL_SIZE] = {0};
-      create_label(label_start, LABEL_SIZE, "doford_s%u", n);
-      char label_loop[LABEL_SIZE] = {0};
-      create_label(label_loop, LABEL_SIZE, "doford_l%u", n);
-      char label_next[LABEL_SIZE] = {0};
-      create_label(label_next, LABEL_SIZE, "doford_n%u", n);
-
-      dprintf(fd, "\tpop dx\n"
-                  "\tconst cx,%s\n", label_start);
-      dprintf(fd, "\tjmp cx\n"
-                  ":%s\n", label_loop);
-
-      // --
-
-      int delta = 2 * (curr_fun->nLocalVariables - (ste->add));
-
-      dprintf(fd, "\tcp cx,bp\n"
-                  "\tconst bx,%d\n", delta);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n"
-                  "\tconst bx,1\n"
-                  "\tsub ax,bx\n"
-                  "\tstorew ax,cx\n");
-      dprintf(fd, ":%s\n", label_start);
-      dprintf(fd, "\tconst bx,%s\n", label_next);
-      dprintf(fd, "\tsless dx,ax\n"
-                  "\tjmpc bx\n");
-    }
-  }
-}
-;
-
-dofori_e: %empty {
-  unsigned int n = top();
-  char label_loop[LABEL_SIZE] = {0};
-  create_label(label_loop, LABEL_SIZE, "dofori_l%u", n);
-  char label_next[LABEL_SIZE] = {0};
-  create_label(label_next, LABEL_SIZE, "dofori_n%u", n);
-  dprintf(fd, "\tconst ax,%s\n", label_loop);
-  dprintf(fd, "\tjmp ax\n"
-              ":%s\n", label_next);
-
-  dprintf(fd, "; fori end\n");
-}
-;
-
-doford_e: %empty {
-  unsigned int n = top();
-  char label_loop[LABEL_SIZE] = {0};
-  create_label(label_loop, LABEL_SIZE, "doford_l%u", n);
-  char label_next[LABEL_SIZE] = {0};
-  create_label(label_next, LABEL_SIZE, "doford_n%u", n);
-  dprintf(fd, "\tconst ax,%s\n", label_loop);
-  dprintf(fd, "\tjmp ax\n"
-              ":%s\n", label_next);
-}
-;
-
 dowhile_t: %empty {
   push(new_label_number());
   unsigned int n = top();
@@ -457,6 +254,7 @@ dowhile_b: %empty {
   unsigned int n = top();
   char label[LABEL_SIZE] = {0};
   create_label(label, LABEL_SIZE, "w_end%u", n);
+  --offset;
   dprintf(fd, "\tpop ax\n"
               "\tconst bx,0\n"
               "\tconst cx,%s\n", label);
@@ -482,48 +280,109 @@ end: %empty {
 }
 ;
 
+call_params:
+%empty {
+  $$ = STATEMENT;
+}
+| param ',' call_params {
+  status s;
+  --offset;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = $1;
+  }
+}
+| param {
+  --offset;
+  $$ = $1;
+}
+;
+
+param: expr {
+  $$ = $1;
+  push(pop() + 1);
+}
+;
+
 expr :
-ID {
+CALL '{' ID {
+  symbol_table_entry *ste = search_symbol_table($3);
+  if (ste == NULL || ste->class != FUNCTION) {
+    fail_with("invalid name in fun call.\n");
+  } else {
+    push(0);
+  }
+} '}' '{' call_params '}' {
+  if ($7 >= ERR_TYP) {
+    $$ = $7;
+  } else {
+    symbol_table_entry *ste = search_symbol_table($3);
+    size_t n = pop();
+    if (ste->nParams != n) {
+      fail_with("invalid number of parameters in function call\n");
+    }
+    $$ = INT;
+
+    dprintf(fd, "\tconst ax,%s\n", $3);
+    dprintf(fd, "\tcall ax\n");
+
+    for(size_t i = 0; i < n; ++i) {
+      dprintf(fd, "\tpop dx\n");
+    }
+    dprintf(fd, "\tpush ax\n");
+    ++offset;
+  }
+}
+| ID {
   symbol_table_entry *ste = search_symbol_table($1);
   if (ste == NULL) {
     $$ = ERR_DEC;
   } else {
     $$ = INT;
     int delta;
+    printf("ID\n");
+    printf("ste: %s - %d\n", ste->name, ste->add);
+    printf("offset ret: %d\n", offset);
+    printf("nloc:%zu\n", curr_fun->nLocalVariables);
+    printf("nparams:%zu\n", curr_fun->nLocalVariables);
+    printf("add:%d\n", ste->add);
     switch(ste->class) {
       case PARAMETER:
-        // sp − 2(n + m − (i − 1))
-        delta = 2 * (curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+        delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+          printf("delta: %d\n", delta);
         dprintf(fd, "\tcp cx,sp\n"
                     "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n"
-                    "\tloadw ax,cx\n");
+        dprintf(fd, "\tsub cx,bx\n");
         break;
       case LOCAL_VARIABLE:
-        // sp − 2(m − (i − 1))
-        delta = 2 * (curr_fun->nLocalVariables - (ste->add));
+        delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
         dprintf(fd, "\tcp cx,sp\n"
                     "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n"
-                    "\tloadw ax,cx\n");
+        dprintf(fd, "\tsub cx,bx\n");
         break;
       default:
         fail_with("invalid class on %s\n", ste->name);
     }
-    dprintf(fd, "\tpush ax\n");
+    dprintf(fd, "\tloadw ax,cx\n"
+                "\tpush ax\n");
+    ++offset;
   }
 }
 | NUMBER {
+  ++offset;
   dprintf(fd, "\tconst ax,%d\n", $1);
   dprintf(fd, "\tpush ax\n");
   $$ = INT;
 }
 | TRUE {
+  ++offset;
   dprintf(fd, "\tconst ax,1\n"
               "\tpush ax\n");
   $$ = INT;
 }
 | FALSE {
+  ++offset;
   dprintf(fd, "\tconst ax,0\n"
               "\tpush ax\n");
   $$ = INT;
@@ -532,6 +391,7 @@ ID {
   $$ = $2;
 }
 | expr '+' expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
@@ -544,6 +404,7 @@ ID {
   }
 }
 | expr '-' expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
@@ -560,6 +421,7 @@ ID {
   }
 }
 | expr '*' expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
@@ -572,6 +434,7 @@ ID {
   }
 }
 | expr TIMES expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
@@ -584,6 +447,7 @@ ID {
   }
 }
 | expr '/' expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
     $$ = s;
@@ -614,6 +478,7 @@ ID {
   }
 }
 | expr AND expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -625,6 +490,7 @@ ID {
   }
 }
 | expr OR expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -636,6 +502,7 @@ ID {
   }
 }
 | expr EQ expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -662,6 +529,7 @@ ID {
   }
 }
 | expr NEQ expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -688,6 +556,7 @@ ID {
   }
 }
 | expr LTH expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -714,6 +583,7 @@ ID {
   }
 }
 | expr LEQ expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -742,6 +612,7 @@ ID {
   }
 }
 | expr GTH expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -768,6 +639,7 @@ ID {
   }
 }
 | expr GEQ expr {
+  --offset;
   status s = 0;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
