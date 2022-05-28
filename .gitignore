@@ -9,3 +9,5 @@ lex.yy.c
 *.out
 *.dot
 *.log
+run
+algo2asm
