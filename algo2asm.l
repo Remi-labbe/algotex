@@ -22,6 +22,8 @@ PREF "\\"
 "!="                  { return NEQ; }
 {PREF}"times"         { return TIMES; }
 {PREF}"SET"           { return AFFECT; }
+{PREF}"INCR"          { return INCR; }
+{PREF}"DECR"          { return DECR; }
 {PREF}"IF"            { return IF; }
 {PREF}"FI"            { return FI; }
 {PREF}"ELSE"          { return ELSE; }

@@ -52,7 +52,7 @@
 %type<s> expr func inst linst algo_b call_params param
 %token ALGO_B ALGO_E
 %token IF FI ELSE DOWHILE OD DO WHILEOD CALL RETURN IGNORE
-%token TIMES
+%token TIMES INCR DECR
 %token<id> ID
 %token<integer> NUMBER
 %token TRUE FALSE AND OR NOT EQ NEQ LTH GTH LEQ GEQ
@@ -161,6 +161,65 @@ AFFECT '{' ID '}' '{' expr '}' {
       }
       dprintf(fd, "\tstorew ax,cx\n");
     }
+  }
+}
+| INCR '{' ID '}' {
+  symbol_table_entry *ste;
+  if ((ste = search_symbol_table($3)) == NULL) {
+    $$ = ERR_DEC;
+  } else {
+    $$ = INT;
+    int delta;
+    switch(ste->class) {
+      case PARAMETER:
+        delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+        printf("delta: %d\n", delta);
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n");
+        break;
+      case LOCAL_VARIABLE:
+        delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n");
+        break;
+      default:
+        fail_with("invalid class on %s\n", ste->name);
+    }
+    dprintf(fd, "\tloadw ax,cx\n"
+                "\tconst bx,1\n"
+                "\tadd ax,bx\n"
+                "\tstorew ax,cx\n");
+  }
+}
+| DECR '{' ID '}' {
+  symbol_table_entry *ste;
+  if ((ste = search_symbol_table($3)) == NULL) {
+    $$ = ERR_DEC;
+  } else {
+    int delta;
+    switch(ste->class) {
+      case PARAMETER:
+        delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+        printf("delta: %d\n", delta);
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n");
+        break;
+      case LOCAL_VARIABLE:
+        delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
+        dprintf(fd, "\tcp cx,sp\n"
+                    "\tconst bx,%d\n", delta);
+        dprintf(fd, "\tsub cx,bx\n");
+        break;
+      default:
+        fail_with("invalid class on %s\n", ste->name);
+    }
+    dprintf(fd, "\tloadw ax,cx\n"
+                "\tconst bx,1\n"
+                "\tsub ax,bx\n"
+                "\tstorew ax,cx\n");
   }
 }
 | IF '{' expr '}' if_b linst if_e end FI {
