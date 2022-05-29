@@ -138,16 +138,10 @@ AFFECT '{' ID '}' '{' expr '}' {
       $$ = STATEMENT;
       dprintf(fd, "\tpop ax\n");
       --offset;
-      printf("SET\n");
-      printf("offset set: %d\n", offset);
-      printf("nloc:%zu\n", curr_fun->nLocalVariables);
-      printf("nparams:%zu\n", curr_fun->nLocalVariables);
-      printf("add:%d\n", ste->add);
       int delta;
       switch(ste->class) {
         case PARAMETER:
           delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-          printf("delta: %d\n", delta);
           dprintf(fd, "\tcp cx,sp\n"
                       "\tconst bx,%d\n", delta);
           dprintf(fd, "\tsub cx,bx\n");
@@ -175,7 +169,6 @@ AFFECT '{' ID '}' '{' expr '}' {
     switch(ste->class) {
       case PARAMETER:
         delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        printf("delta: %d\n", delta);
         dprintf(fd, "\tcp cx,sp\n"
                     "\tconst bx,%d\n", delta);
         dprintf(fd, "\tsub cx,bx\n");
@@ -204,7 +197,6 @@ AFFECT '{' ID '}' '{' expr '}' {
     switch(ste->class) {
       case PARAMETER:
         delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        printf("delta: %d\n", delta);
         dprintf(fd, "\tcp cx,sp\n"
                     "\tconst bx,%d\n", delta);
         dprintf(fd, "\tsub cx,bx\n");
@@ -250,7 +242,6 @@ AFFECT '{' ID '}' '{' expr '}' {
 }
 | RETURN '{' expr '}' {
   --offset;
-  printf("%d\n", offset);
   dprintf(fd, "\tpop ax\n");
   for (size_t i = 0; i < curr_fun->nLocalVariables; i++) {
     free_first_symbol_table_entry();
@@ -405,16 +396,9 @@ CALL '{' ID {
   } else {
     $$ = INT;
     int delta;
-    printf("ID\n");
-    printf("ste: %s - %d\n", ste->name, ste->add);
-    printf("offset ret: %d\n", offset);
-    printf("nloc:%zu\n", curr_fun->nLocalVariables);
-    printf("nparams:%zu\n", curr_fun->nLocalVariables);
-    printf("add:%d\n", ste->add);
     switch(ste->class) {
       case PARAMETER:
         delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-          printf("delta: %d\n", delta);
         dprintf(fd, "\tcp cx,sp\n"
                     "\tconst bx,%d\n", delta);
         dprintf(fd, "\tsub cx,bx\n");

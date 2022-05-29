@@ -253,7 +253,6 @@ int main(int argc, char **argv) {
       fail_with("close\n");
     }
 
-    printf("compile\n");
     execvp(argv[0], argv);
     exit(EXIT_FAILURE);
   default:
@@ -276,7 +275,7 @@ int main(int argc, char **argv) {
     argv[0] = sipro;
     argv[1] = compiled_name;
     argv[2] = NULL;
-    printf("exec\n");
+
     execvp(argv[0], argv);
     exit(EXIT_FAILURE);
   default:
