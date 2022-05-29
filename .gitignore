@@ -9,5 +9,6 @@ lex.yy.c
 *.out
 *.dot
 *.log
+*.pdf
 run
 algo2asm
