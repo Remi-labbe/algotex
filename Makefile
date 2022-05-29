@@ -26,9 +26,6 @@ algo2asm.tab.c algo2asm.tab.h: algo2asm.y algo2asm.lex.h
 algo2asm.lex.c: algo2asm.l algo2asm.tab.h
 	$(LEX) $(LEXOPTS) -o $@ $<
 
-algo2asm.lex.h: algo2asm.l
-	$(LEX) $(LEXOPTS) --header-file=$@ $<
-
 ### run
 
 run: run.lex.o run.tab.o stack.o
@@ -41,12 +38,10 @@ run.tab.c run.tab.h: run.y run.lex.h
 run.lex.c: run.l run.tab.h
 	$(LEX) $(LEXOPTS) -o $@ $<
 
-run.lex.h: run.l
-	$(LEX) $(LEXOPTS) --header-file=$@ $<
-
 ### others
 
-stack.o: stack.h stack.c
+%.lex.h: %.l
+	$(LEX) $(LEXOPTS) --header-file=$@ $<
 
 %.o: %.c
 	$(CC) -DYYDEBUG $(CFLAGS) $< -c

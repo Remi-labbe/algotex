@@ -51,7 +51,9 @@
 }
 %type<s> expr func inst linst algo_b call_params param
 %token ALGO_B ALGO_E
-%token IF FI ELSE DOWHILE OD DO WHILEOD CALL RETURN IGNORE
+%token IF FI ELSE DOWHILE OD DO WHILEOD
+%token CALL RETURN
+%token IGNORE INVALID
 %token TIMES INCR DECR
 %token<id> ID
 %token<integer> NUMBER
@@ -258,6 +260,9 @@ AFFECT '{' ID '}' '{' expr '}' {
 }
 | IGNORE {
   $$ = STATEMENT;
+}
+| INVALID {
+  fail_with("Instruction not implementable.\n");
 }
 ;
 

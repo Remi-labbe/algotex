@@ -35,10 +35,15 @@ PREF "\\"
 {PREF}"RETURN"        { return RETURN; }
 {PREF}"begin{algo}"   { return ALGO_B; }
 {PREF}"end{algo}"     { return ALGO_E; }
-{PREF}"COM{.*}"       { return IGNORE; }
-{PREF}"IN{.*}"        { return IGNORE; }
-{PREF}"OUT{.*}"       { return IGNORE; }
-{PREF}"AUX{.*}"       { return IGNORE; }
+{PREF}"DOFOR"         { return INVALID; }
+{PREF}"CUT"           |
+{PREF}"BREAK"         |
+{PREF}"COM{".*"}"     |
+{PREF}"ACT{".*"}"     |
+{PREF}"LABEL{".*"}"   |
+{PREF}"IN{".*"}"      |
+{PREF}"OUT{".*"}"     |
+{PREF}"AUX{".*"}"     { return IGNORE; }
 {NUMBER}              { string_to_int(&yylval.integer, yytext); return NUMBER; }
 {ID}                  { strncpy(yylval.id, yytext, 64); return ID; }
 [[:blank:]]|\n
