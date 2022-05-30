@@ -16,11 +16,6 @@
   #include "stable.h"
   #include "stack.h"
 
-  int yylex(void);
-  void yyerror(char const *);
-  void free_symbols();
-  void fail_with(const char *format, ...);
-  void true_from_positive();
   // Variables labels [[
   static unsigned int new_label_number() {
     static unsigned int current_label_number = 0u;
@@ -40,25 +35,54 @@
   }
   // ]]
 
+  int yylex(void);
+  void yyerror(char const *);
   extern FILE *yyin;
   extern int yylineno;
+
   static int fd, offset = 0;
   symbol_table_entry *curr_fun = NULL;
+
+  enum reg {
+    AX,
+    BX,
+    CX,
+    DX
+  };
+
+  void fail_with(const char *format, ...);
+
+  /**
+   * @function true_from_positive
+   * @abstract load the value on top of the stack as a boolean
+   * @param     r     the register used to store the boolean
+   */
+  void true_from_positive(enum reg r);
+
+  /**
+   * @function load_addr
+   * @abstract store the addr of the var or parameter defined in ste in the register r
+   * @param     r     the register used to store the addr
+   * @param     ste   the symbol table entry of the var or parameter
+   */
+  void load_addr(enum reg r, symbol_table_entry *ste);
 %}
 %union {
   int integer;
   char id[64];
   status s;
 }
-%type<s> expr func inst linst algo_b call_params param dofori_b doford_b doforis_b dofords_b
+%type<s> expr func inst linst algo_b call_params param
+  dofori_b doford_b doforis_b dofords_b
 %token ALGO_B ALGO_E
-%token IF FI ELSE DOWHILE DOFORI DOFORIS DOFORD DOFORDS OD DO WHILEOD REPEAT UNTIL
-%token CALL RETURN
-%token IGNORE INVALID
-%token TIMES INCR DECR
+%token IF ELSE DOWHILE DOFORI DOFORIS DOFORD DOFORDS DO REPEAT
+  FI OD WHILEOD UNTIL
+  CALL RETURN
+  IGNORE INVALID
+  TIMES INCR DECR
+  TRUE FALSE AND OR NOT EQ NEQ LTH GTH LEQ GEQ
 %token<id> ID
 %token<integer> NUMBER
-%token TRUE FALSE AND OR NOT EQ NEQ LTH GTH LEQ GEQ
 %left AFFECT
 %left OR
 %left AND
@@ -139,23 +163,7 @@ AFFECT '{' ID '}' '{' expr '}' {
       $$ = STATEMENT;
       dprintf(fd, "\tpop ax\n");
       --offset;
-      int delta;
-      switch(ste->class) {
-        case PARAMETER:
-          delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-          dprintf(fd, "\tcp cx,sp\n"
-                      "\tconst bx,%d\n", delta);
-          dprintf(fd, "\tsub cx,bx\n");
-          break;
-        case LOCAL_VARIABLE:
-          delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
-          dprintf(fd, "\tcp cx,sp\n"
-                      "\tconst bx,%d\n", delta);
-          dprintf(fd, "\tsub cx,bx\n");
-          break;
-        default:
-          fail_with("invalid class on %s\n", ste->name);
-      }
+      load_addr(CX, ste);
       dprintf(fd, "\tstorew ax,cx\n");
     }
   }
@@ -166,23 +174,7 @@ AFFECT '{' ID '}' '{' expr '}' {
     $$ = ERR_DEC;
   } else {
     $$ = INT;
-    int delta;
-    switch(ste->class) {
-      case PARAMETER:
-        delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n");
-        break;
-      case LOCAL_VARIABLE:
-        delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n");
-        break;
-      default:
-        fail_with("invalid class on %s\n", ste->name);
-    }
+    load_addr(CX, ste);
     dprintf(fd, "\tloadw ax,cx\n"
                 "\tconst bx,1\n"
                 "\tadd ax,bx\n"
@@ -194,23 +186,8 @@ AFFECT '{' ID '}' '{' expr '}' {
   if ((ste = search_symbol_table($3)) == NULL) {
     $$ = ERR_DEC;
   } else {
-    int delta;
-    switch(ste->class) {
-      case PARAMETER:
-        delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n");
-        break;
-      case LOCAL_VARIABLE:
-        delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n");
-        break;
-      default:
-        fail_with("invalid class on %s\n", ste->name);
-    }
+    $$ = INT;
+    load_addr(CX, ste);
     dprintf(fd, "\tloadw ax,cx\n"
                 "\tconst bx,1\n"
                 "\tsub ax,bx\n"
@@ -817,23 +794,7 @@ CALL '{' ID {
     $$ = ERR_DEC;
   } else {
     $$ = INT;
-    int delta;
-    switch(ste->class) {
-      case PARAMETER:
-        delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n");
-        break;
-      case LOCAL_VARIABLE:
-        delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
-        dprintf(fd, "\tcp cx,sp\n"
-                    "\tconst bx,%d\n", delta);
-        dprintf(fd, "\tsub cx,bx\n");
-        break;
-      default:
-        fail_with("invalid class on %s\n", ste->name);
-    }
+    load_addr(CX, ste);
     dprintf(fd, "\tloadw ax,cx\n"
                 "\tpush ax\n");
     ++offset;
@@ -954,7 +915,8 @@ CALL '{' ID {
     $$ = s;
   } else {
     $$ = INT;
-    true_from_positive();
+    true_from_positive(AX);
+    true_from_positive(BX);
     dprintf(fd, "\tand ax,bx\n"
                 "\tpush ax\n");
   }
@@ -966,7 +928,8 @@ CALL '{' ID {
     $$ = s;
   } else {
     $$ = INT;
-    true_from_positive();
+    true_from_positive(AX);
+    true_from_positive(BX);
     dprintf(fd, "\tor ax,bx\n"
                 "\tpush ax\n");
   }
@@ -1165,37 +1128,92 @@ CALL '{' ID {
 ;
 %%
 
-void prepare_for() {
+void load_addr(enum reg r, symbol_table_entry *ste) {
+  int delta;
+  char r_str[16] = {0};
 
+  switch(r){
+  case AX:
+    snprintf(r_str, sizeof(r_str), "ax");
+    break;
+  case BX:
+    snprintf(r_str, sizeof(r_str), "bx");
+    break;
+  case CX:
+    snprintf(r_str, sizeof(r_str), "cx");
+    break;
+  default:
+    fail_with("Can't use this register here!");
+  }
+
+  switch(ste->class) {
+    case PARAMETER:
+      delta = 2 * (offset + curr_fun->nLocalVariables + curr_fun->nParams - (ste->add - 1));
+      dprintf(fd, "\tcp %s,sp\n", r_str);
+      dprintf(fd, "\tconst dx,%d\n", delta);
+      dprintf(fd, "\tsub %s,dx\n", r_str);
+      break;
+    case LOCAL_VARIABLE:
+      delta = 2 * (offset + curr_fun->nLocalVariables - (ste->add));
+      dprintf(fd, "\tcp %s,sp\n", r_str);
+      dprintf(fd, "\tconst dx,%d\n", delta);
+      dprintf(fd, "\tsub %s,dx\n", r_str);
+      break;
+    default:
+      fail_with("invalid class on %s\n", ste->name);
+  }
 }
 
-void true_from_positive() {
+void true_from_positive(enum reg r) {
+  char r_str[16] = {0};
   int n = new_label_number();
-  char label1[LABEL_SIZE] = {0};
-  create_label(label1, LABEL_SIZE, "jmp%u", n);
-  dprintf(fd, "\tpop ax\n"
-              "\tconst dx,%s\n", label1);
+  char label[LABEL_SIZE] = {0};
+
+  switch(r){
+  case AX:
+    snprintf(r_str, sizeof(r_str), "ax");
+    break;
+  case BX:
+    snprintf(r_str, sizeof(r_str), "bx");
+    break;
+  default:
+    fail_with("Can't use this register here!");
+  }
+
+  create_label(label, LABEL_SIZE, "jmp%u", n);
+  dprintf(fd, "\tpop %s\n", r_str);
+  dprintf(fd, "\tconst dx,%s\n", label);
   dprintf(fd, "\tconst cx,0\n"
-              "\tcmp ax,cx\n"
-              "\tjmpc dx\n"
-              "\tconst ax,1\n"
-              ":%s\n", label1);
-  n = new_label_number();
-  char label2[LABEL_SIZE] = {0};
-  create_label(label2, LABEL_SIZE, "jmp%u", n);
-  dprintf(fd, "\tpop bx\n"
-              "\tconst dx,%s\n", label2);
-  dprintf(fd, "\tconst cx,0\n"
-              "\tcmp bx,cx\n"
-              "\tjmpc dx\n"
-              "\tconst bx,1\n"
-              ":%s\n", label2);
+              "\tcmp %s,cx\n", r_str);
+  dprintf(fd, "\tjmpc dx\n"
+              "\tconst %s,1\n", r_str);
+  dprintf(fd, ":%s\n", label);
 }
 
+/**
+ * @function  yyerror
+ * @abstract  define the format of the error output of bison
+ * @param     s     String defining the error;
+ */
 void yyerror(char const *s) {
   fprintf(stderr, "line %d: %s\n", yylineno, s);
 }
 
+/**
+ * @function  free_symbols
+ * @abstract  Clears the symbol table
+ */
+void free_symbols() {
+  while (symbol_table_head() != NULL) {
+    free_first_symbol_table_entry();
+  }
+}
+
+/**
+ * @function  fail_with
+ * @abstract  Terminate the program outputing an error like fprintf.
+ * @param     format...   defines the format of the output like printf
+ */
 void fail_with(const char *format, ...) {
   va_list ap;
   va_start(ap, format);
@@ -1205,11 +1223,6 @@ void fail_with(const char *format, ...) {
   exit(EXIT_FAILURE);
 }
 
-void free_symbols() {
-  while (symbol_table_head() != NULL) {
-    free_first_symbol_table_entry();
-  }
-}
 
 int main(int argc, char **argv) {
   if (argc != 2) {
