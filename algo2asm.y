@@ -41,6 +41,7 @@
   // ]]
 
   extern FILE *yyin;
+  extern int yylineno;
   static int fd, offset = 0;
   symbol_table_entry *curr_fun = NULL;
 %}
@@ -49,9 +50,9 @@
   char id[64];
   status s;
 }
-%type<s> expr func inst linst algo_b call_params param
+%type<s> expr func inst linst algo_b call_params param dofori_b doford_b doforis_b dofords_b
 %token ALGO_B ALGO_E
-%token IF FI ELSE DOWHILE OD DO WHILEOD
+%token IF FI ELSE DOWHILE DOFORI DOFORIS DOFORD DOFORDS OD DO WHILEOD REPEAT UNTIL
 %token CALL RETURN
 %token IGNORE INVALID
 %token TIMES INCR DECR
@@ -232,9 +233,57 @@ AFFECT '{' ID '}' '{' expr '}' {
     $$ = STATEMENT;
   }
 }
-| DOWHILE  dowhile_t '{' expr '}' dowhile_b linst dowhile_e end OD {
+| DOFORI dofori_b linst dofor_e end OD {
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DOFORIS doforis_b linst dofor_e end OD {
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DOFORD doford_b linst dofor_e end OD {
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DOFORDS dofords_b linst dofor_e end OD {
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DOWHILE dowhile_t '{' expr '}' dowhile_b linst dowhile_e end OD {
   status s = 0;
   if ((s = $4) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| DO do_b linst WHILEOD '{' expr '}' do_e end {
+  status s = 0;
+  if ((s = $6) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| REPEAT repeat_b linst UNTIL '{' expr '}' repeat_e end {
+  status s = 0;
+  if ((s = $6) >= ERR_TYP) {
     $$ = s;
   } else {
     $$ = STATEMENT;
@@ -296,6 +345,330 @@ else_e: %empty {
 }
 ;
 
+dofori_b: '{' ID '}' '{' expr '}' '{' expr '}' {
+  if ($5 >= ERR_TYP) {
+    $$ = $5;
+  } else if ($5 != INT) {
+    $$ = ERR_TYP;
+  } else {
+    if (search_symbol_table($2) != NULL) {
+      $$ = ERR_DEC;
+    } else {
+      $$ = STATEMENT;
+
+      push(new_label_number());
+      unsigned int n = top();
+
+      // INIT LOOP VAR
+      symbol_table_entry *var = new_symbol_table_entry($2);
+      var->class = LOCAL_VARIABLE;
+      var->add = ++curr_fun->nLocalVariables;
+      var->desc[0] = INT_T;
+      --offset;
+
+      // SAVE END VAL
+      char buf[16] = {0};
+      snprintf(buf, sizeof(buf), "%u", n);
+      symbol_table_entry *endval = new_symbol_table_entry(buf);
+      endval->class = LOCAL_VARIABLE;
+      endval->add = ++curr_fun->nLocalVariables;
+      endval->desc[0] = INT_T;
+      --offset;
+
+      char label_start[LABEL_SIZE] = {0};
+      create_label(label_start, LABEL_SIZE, "dofor_s%u", n);
+      char label_loop[LABEL_SIZE] = {0};
+      create_label(label_loop, LABEL_SIZE, "dofor_l%u", n);
+      char label_next[LABEL_SIZE] = {0};
+      create_label(label_next, LABEL_SIZE, "dofor_n%u", n);
+
+      dprintf(fd, "\tconst cx,%s\n", label_start);
+      dprintf(fd, "\tjmp cx\n"
+                  ":%s\n", label_loop);
+
+      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
+      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
+
+      // ++
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n"
+                  "\tconst bx,1\n"
+                  "\tadd ax,bx\n"
+                  "\tstorew ax,cx\n");
+      dprintf(fd, ":%s\n", label_start);
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_end);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw bx,cx\n");
+      dprintf(fd, "\tconst cx,%s\n", label_next);
+      dprintf(fd, "\tsless bx,ax\n"
+                  "\tjmpc cx\n");
+    }
+  }
+}
+;
+
+doforis_b: '{' ID '}' '{' expr '}' '{' expr '}' '{' expr '}' {
+  if ($5 >= ERR_TYP) {
+    $$ = $5;
+  } else if ($5 != INT) {
+    $$ = ERR_TYP;
+  } else {
+    if (search_symbol_table($2) != NULL) {
+      $$ = ERR_DEC;
+    } else {
+      $$ = STATEMENT;
+
+      push(new_label_number());
+      unsigned int n = top();
+
+      // INIT LOOP VAR
+      symbol_table_entry *var = new_symbol_table_entry($2);
+      var->class = LOCAL_VARIABLE;
+      var->add = ++curr_fun->nLocalVariables;
+      var->desc[0] = INT_T;
+      --offset;
+
+      // SAVE END VAL
+      char endn[16] = {0};
+      snprintf(endn, sizeof(endn), "%ue", n);
+      symbol_table_entry *endval = new_symbol_table_entry(endn);
+      endval->class = LOCAL_VARIABLE;
+      endval->add = ++curr_fun->nLocalVariables;
+      endval->desc[0] = INT_T;
+      --offset;
+
+      // SAVE STEP VAL
+      char stepn[16] = {0};
+      snprintf(stepn, sizeof(stepn), "%us", n);
+      symbol_table_entry *stepval = new_symbol_table_entry(stepn);
+      stepval->class = LOCAL_VARIABLE;
+      stepval->add = ++curr_fun->nLocalVariables;
+      stepval->desc[0] = INT_T;
+      --offset;
+
+      char label_start[LABEL_SIZE] = {0};
+      create_label(label_start, LABEL_SIZE, "dofor_s%u", n);
+      char label_loop[LABEL_SIZE] = {0};
+      create_label(label_loop, LABEL_SIZE, "dofor_l%u", n);
+      char label_next[LABEL_SIZE] = {0};
+      create_label(label_next, LABEL_SIZE, "dofor_n%u", n);
+
+      dprintf(fd, "\tconst cx,%s\n", label_start);
+      dprintf(fd, "\tjmp cx\n"
+                  ":%s\n", label_loop);
+
+      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
+      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
+      int delta_step = 2 * (offset + curr_fun->nLocalVariables - (stepval->add));
+
+      // LOOP VAR
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      // STEP VAL
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_step);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw bx,cx\n");
+      dprintf(fd, "\tadd ax,bx\n"
+                  "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tstorew ax,cx\n");
+      dprintf(fd, ":%s\n", label_start);
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_end);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw bx,cx\n");
+      dprintf(fd, "\tconst cx,%s\n", label_next);
+      dprintf(fd, "\tsless bx,ax\n"
+                  "\tjmpc cx\n");
+    }
+  }
+}
+;
+
+doford_b: '{' ID '}' '{' expr '}' '{' expr '}' {
+  if ($5 >= ERR_TYP) {
+    $$ = $5;
+  } else if ($5 != INT) {
+    $$ = ERR_TYP;
+  } else {
+    if (search_symbol_table($2) != NULL) {
+      $$ = ERR_DEC;
+    } else {
+      $$ = STATEMENT;
+
+      push(new_label_number());
+      unsigned int n = top();
+
+      // INIT LOOP VAR
+      symbol_table_entry *var = new_symbol_table_entry($2);
+      var->class = LOCAL_VARIABLE;
+      var->add = ++curr_fun->nLocalVariables;
+      var->desc[0] = INT_T;
+      --offset;
+
+      // SAVE END VAL
+      char buf[16] = {0};
+      snprintf(buf, sizeof(buf), "%u", n);
+      symbol_table_entry *endval = new_symbol_table_entry(buf);
+      endval->class = LOCAL_VARIABLE;
+      endval->add = ++curr_fun->nLocalVariables;
+      endval->desc[0] = INT_T;
+      --offset;
+
+      char label_start[LABEL_SIZE] = {0};
+      create_label(label_start, LABEL_SIZE, "dofor_s%u", n);
+      char label_loop[LABEL_SIZE] = {0};
+      create_label(label_loop, LABEL_SIZE, "dofor_l%u", n);
+      char label_next[LABEL_SIZE] = {0};
+      create_label(label_next, LABEL_SIZE, "dofor_n%u", n);
+
+      dprintf(fd, "\tconst cx,%s\n", label_start);
+      dprintf(fd, "\tjmp cx\n"
+                  ":%s\n", label_loop);
+
+      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
+      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
+
+      // ++
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n"
+                  "\tconst bx,1\n"
+                  "\tsub ax,bx\n"
+                  "\tstorew ax,cx\n");
+      dprintf(fd, ":%s\n", label_start);
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_end);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw bx,cx\n");
+      dprintf(fd, "\tconst cx,%s\n", label_next);
+      dprintf(fd, "\tsless bx,ax\n"
+                  "\tjmpc cx\n");
+    }
+  }
+}
+;
+
+dofords_b: '{' ID '}' '{' expr '}' '{' expr '}' '{' expr '}' {
+  if ($5 >= ERR_TYP) {
+    $$ = $5;
+  } else if ($5 != INT) {
+    $$ = ERR_TYP;
+  } else {
+    if (search_symbol_table($2) != NULL) {
+      $$ = ERR_DEC;
+    } else {
+      $$ = STATEMENT;
+
+      push(new_label_number());
+      unsigned int n = top();
+
+      // INIT LOOP VAR
+      symbol_table_entry *var = new_symbol_table_entry($2);
+      var->class = LOCAL_VARIABLE;
+      var->add = ++curr_fun->nLocalVariables;
+      var->desc[0] = INT_T;
+      --offset;
+
+      // SAVE END VAL
+      char endn[16] = {0};
+      snprintf(endn, sizeof(endn), "%ue", n);
+      symbol_table_entry *endval = new_symbol_table_entry(endn);
+      endval->class = LOCAL_VARIABLE;
+      endval->add = ++curr_fun->nLocalVariables;
+      endval->desc[0] = INT_T;
+      --offset;
+
+      // SAVE STEP VAL
+      char stepn[16] = {0};
+      snprintf(stepn, sizeof(stepn), "%us", n);
+      symbol_table_entry *stepval = new_symbol_table_entry(stepn);
+      stepval->class = LOCAL_VARIABLE;
+      stepval->add = ++curr_fun->nLocalVariables;
+      stepval->desc[0] = INT_T;
+      --offset;
+
+      char label_start[LABEL_SIZE] = {0};
+      create_label(label_start, LABEL_SIZE, "dofor_s%u", n);
+      char label_loop[LABEL_SIZE] = {0};
+      create_label(label_loop, LABEL_SIZE, "dofor_l%u", n);
+      char label_next[LABEL_SIZE] = {0};
+      create_label(label_next, LABEL_SIZE, "dofor_n%u", n);
+
+      dprintf(fd, "\tconst cx,%s\n", label_start);
+      dprintf(fd, "\tjmp cx\n"
+                  ":%s\n", label_loop);
+
+      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
+      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
+      int delta_step = 2 * (offset + curr_fun->nLocalVariables - (stepval->add));
+
+      // LOOP VAR
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      // STEP VAL
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_step);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw bx,cx\n");
+      dprintf(fd, "\tsub ax,bx\n"
+                  "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tstorew ax,cx\n");
+      dprintf(fd, ":%s\n", label_start);
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_var);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw ax,cx\n");
+      dprintf(fd, "\tcp cx,sp\n"
+                  "\tconst bx,%d\n", delta_end);
+      dprintf(fd, "\tsub cx,bx\n"
+                  "\tloadw bx,cx\n");
+      dprintf(fd, "\tconst cx,%s\n", label_next);
+      dprintf(fd, "\tsless bx,ax\n"
+                  "\tjmpc cx\n");
+    }
+  }
+}
+;
+
+dofor_e: %empty {
+  unsigned int n = top();
+  char label_loop[LABEL_SIZE] = {0};
+  create_label(label_loop, LABEL_SIZE, "dofor_l%u", n);
+  char label_next[LABEL_SIZE] = {0};
+  create_label(label_next, LABEL_SIZE, "dofor_n%u", n);
+  dprintf(fd, "\tconst ax,%s\n", label_loop);
+  dprintf(fd, "\tjmp ax\n"
+              ":%s\n", label_next);
+
+  dprintf(fd, "; fori end\n");
+}
+;
+
 dowhile_t: %empty {
   push(new_label_number());
   unsigned int n = top();
@@ -327,6 +700,55 @@ dowhile_e: %empty {
   dprintf(fd, "\tconst ax,%s\n", tlabel);
   dprintf(fd, "\tjmp ax\n");
   dprintf(fd, ":%s\n", elabel);
+}
+;
+
+do_b: %empty {
+  push(new_label_number());
+  unsigned int n = top();
+  char label[LABEL_SIZE] = {0};
+  create_label(label, LABEL_SIZE, "do_b%u", n);
+  dprintf(fd, ":%s\n", label);
+}
+;
+
+do_e: %empty {
+  unsigned int n = top();
+  char loop[LABEL_SIZE] = {0};
+  create_label(loop, LABEL_SIZE, "do_b%u", n);
+  char elabel[LABEL_SIZE] = {0};
+  create_label(elabel, LABEL_SIZE, "do_e%u", n);
+  --offset;
+  dprintf(fd, "\tpop ax\n"
+              "\tconst bx,0\n"
+              "\tconst cx,%s\n", elabel);
+  dprintf(fd, "\tcmp ax,bx\n"
+              "\tjmpc cx\n");
+  dprintf(fd, "\tconst ax,%s\n", loop);
+  dprintf(fd, "\tjmp ax\n");
+  dprintf(fd, ":%s\n", elabel);
+}
+;
+
+repeat_b: %empty {
+  push(new_label_number());
+  unsigned int n = top();
+  char label[LABEL_SIZE] = {0};
+  create_label(label, LABEL_SIZE, "repeat_b%u", n);
+  dprintf(fd, ":%s\n", label);
+}
+;
+
+repeat_e: %empty {
+  unsigned int n = top();
+  char loop[LABEL_SIZE] = {0};
+  create_label(loop, LABEL_SIZE, "repeat_b%u", n);
+  --offset;
+  dprintf(fd, "\tpop ax\n"
+              "\tconst bx,0\n"
+              "\tconst cx,%s\n", loop);
+  dprintf(fd, "\tcmp ax,bx\n"
+              "\tjmpc cx\n");
 }
 ;
 
@@ -743,6 +1165,10 @@ CALL '{' ID {
 ;
 %%
 
+void prepare_for() {
+
+}
+
 void true_from_positive() {
   int n = new_label_number();
   char label1[LABEL_SIZE] = {0};
@@ -767,7 +1193,7 @@ void true_from_positive() {
 }
 
 void yyerror(char const *s) {
-  fprintf(stderr, "%s\n", s);
+  fprintf(stderr, "line %d: %s\n", yylineno, s);
 }
 
 void fail_with(const char *format, ...) {

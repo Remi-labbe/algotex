@@ -4,10 +4,9 @@
   #include "algo2asm.tab.h"
   void string_to_int(int *v, const char *s);
 %}
-%option noyywrap
+%option noyywrap yylineno
 NUMBER [[:digit:]]+
 ID [[:alpha:]]+[[:alnum:]]*
-PREF "\\"
 %%
 "true"                { return TRUE; }
 "false"               { return FALSE; }
@@ -20,30 +19,37 @@ PREF "\\"
 ">="                  { return GEQ; }
 "=="                  { return EQ; }
 "!="                  { return NEQ; }
-{PREF}"times"         { return TIMES; }
-{PREF}"SET"           { return AFFECT; }
-{PREF}"INCR"          { return INCR; }
-{PREF}"DECR"          { return DECR; }
-{PREF}"IF"            { return IF; }
-{PREF}"FI"            { return FI; }
-{PREF}"ELSE"          { return ELSE; }
-{PREF}"DOWHILE"       { return DOWHILE; }
-{PREF}"OD"            { return OD; }
-{PREF}"DO"            { return DO; }
-{PREF}"WHILEOD"       { return WHILEOD; }
-{PREF}"CALL"          { return CALL; }
-{PREF}"RETURN"        { return RETURN; }
-{PREF}"begin{algo}"   { return ALGO_B; }
-{PREF}"end{algo}"     { return ALGO_E; }
-{PREF}"DOFOR"         { return INVALID; }
-{PREF}"CUT"           |
-{PREF}"BREAK"         |
-{PREF}"COM{".*"}"     |
-{PREF}"ACT{".*"}"     |
-{PREF}"LABEL{".*"}"   |
-{PREF}"IN{".*"}"      |
-{PREF}"OUT{".*"}"     |
-{PREF}"AUX{".*"}"     { return IGNORE; }
+"\\times"             { return TIMES; }
+"\\SET"               { return AFFECT; }
+"\\INCR"              { return INCR; }
+"\\DECR"              { return DECR; }
+"\\IF"                { return IF; }
+"\\FI"                { return FI; }
+"\\ELSE"              { return ELSE; }
+"\\DOWHILE"           { return DOWHILE; }
+"\\DOFORI"            { return DOFORI; }
+"\\DOFORD"            { return DOFORD; }
+"\\DOFORIS"           { return DOFORIS; }
+"\\DOFORDS"           { return DOFORDS; }
+"\\OD"                { return OD; }
+"\\DO"                { return DO; }
+"\\WHILEOD"           { return WHILEOD; }
+"\\REPEAT"            { return REPEAT; }
+"\\UNTIL"             { return UNTIL; }
+"\\CALL"              { return CALL; }
+"\\RETURN"            { return RETURN; }
+"\\begin{algo}"       { return ALGO_B; }
+"\\end{algo}"         { return ALGO_E; }
+"\\DOFOREACH"         |
+"\\DOFOR"             { return INVALID; }
+"\\CUT"               |
+"\\BREAK"             |
+"\\COM{".*"}"         |
+"\\ACT{".*"}"         |
+"\\LABEL{".*"}"       |
+"\\IN{".*"}"          |
+"\\OUT{".*"}"         |
+"\\AUX{".*"}"         { return IGNORE; }
 {NUMBER}              { string_to_int(&yylval.integer, yytext); return NUMBER; }
 {ID}                  { strncpy(yylval.id, yytext, 64); return ID; }
 [[:blank:]]|\n

@@ -26,7 +26,13 @@ La liste des instructions disponibles est la suivante:
 - DECR
 - IF
 - IF ELSE
-- DOWHILE
+- DOWHILE...OD
+- DO...WHILEOD
+- REPEAT...UNTIL
+- DOFORI
+- DOFORD
+- DOFORIS
+- DOFORDS
 - CALL
 - RETURN
 
@@ -41,8 +47,8 @@ Les instructions suivante sont ignorées:
 - OUT
 - AUX
 
-Attention! L'instruction DOFOR{...} contenant une condition sous forme de phrase produira une erreur 
-puisqu'elle ne peut pas etre implementée.
+Attention! Les instructions DOFOR{...} et DOFOREACH{...} contenant une condition sous forme de phrase 
+produiront une erreur puisqu'elles ne peuvent pas etre implementées.
 
 ## Implementation
 

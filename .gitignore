@@ -1,13 +1,15 @@
+
 *.asm
 *.tex
 *.o
-*.lex.*
+lex.*.*
 lex.yy.c
 *.tab.*
 *.err.*
 *.output
 *.out
 *.dot
+*.gv
 *.log
 *.pdf
 run

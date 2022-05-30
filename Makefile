@@ -16,35 +16,32 @@ all: $(EXECS)
 
 ### algo2asm
 
-algo2asm: algo2asm.lex.o algo2asm.tab.o stable.o stack.o
+algo2asm: lex.algo2asm.o algo2asm.tab.o stable.o stack.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
-algo2asm.tab.c algo2asm.tab.h: algo2asm.y algo2asm.lex.h
-	$(YACC) $(YACCOPTS) $< -d -v
-	# $(YACC) $(YACCOPTS) $< -d -v --graph
-
-algo2asm.lex.c: algo2asm.l algo2asm.tab.h
-	$(LEX) $(LEXOPTS) -o $@ $<
+algo2asm.tab.c algo2asm.tab.h: algo2asm.y lex.algo2asm.h
+	# $(YACC) $(YACCOPTS) $< -d -v
+	$(YACC) $(YACCOPTS) $< -d -v --graph
 
 ### run
 
-run: run.lex.o run.tab.o stack.o
+run: lex.run.o run.tab.o stack.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
-run.tab.c run.tab.h: run.y run.lex.h
-	$(YACC) $(YACCOPTS) $< -d -v
-	# $(YACC) $(YACCOPTS) $< -d -v --graph
-
-run.lex.c: run.l run.tab.h
-	$(LEX) $(LEXOPTS) -o $@ $<
+run.tab.c run.tab.h: run.y lex.run.h
+	# $(YACC) $(YACCOPTS) $< -d -v
+	$(YACC) $(YACCOPTS) $< -d -v --graph
 
 ### others
 
-%.lex.h: %.l
+lex.%.c: %.l %.tab.h
+	$(LEX) $(LEXOPTS) -o $@ $<
+
+lex.%.h: %.l
 	$(LEX) $(LEXOPTS) --header-file=$@ $<
 
 %.o: %.c
 	$(CC) -DYYDEBUG $(CFLAGS) $< -c
 
 clean:
-	$(RM) $(EXECS) *.o *.lex.* lex.yy.c *.tab.* *.err *.output *.out *.dot
+	$(RM) $(EXECS) *.o lex.*.* *.tab.* *.err *.output *.out *.dot *.gv *.asm
