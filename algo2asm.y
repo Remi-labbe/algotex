@@ -75,7 +75,7 @@
 %type<s> expr func inst linst algo_b call_params param
   dofori_b doford_b doforis_b dofords_b
 %token ALGO_B ALGO_E
-%token IF ELSE DOWHILE DOFORI DOFORIS DOFORD DOFORDS DO REPEAT
+  IF ELSE DOWHILE DOFORI DOFORIS DOFORD DOFORDS DO REPEAT
   FI OD WHILEOD UNTIL
   CALL RETURN
   IGNORE INVALID
