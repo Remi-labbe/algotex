@@ -1,3 +1,5 @@
+%define parse.error verbose
+%locations
 %{
   #define _POSIX_C_SOURCE 200809L
   #ifndef LABEL_SIZE
@@ -15,6 +17,9 @@
   #include "types.h"
   #include "stable.h"
   #include "stack.h"
+
+  #define C_RED     "\x1B[31m"
+  #define C_RESET   "\x1B[0m"
 
   // Variables labels [[
   static unsigned int new_label_number() {
@@ -41,6 +46,7 @@
   extern int yylineno;
 
   static int fd, offset = 0;
+  char *target_name = NULL;
   symbol_table_entry *curr_fun = NULL;
 
   enum reg {
@@ -50,7 +56,19 @@
     DX
   };
 
+  /**
+  * @function  fail_with
+  * @abstract  Terminate the program outputing an error like fprintf.
+  * @param     format...   defines the format of the output like printf
+  */
   void fail_with(const char *format, ...);
+
+  /**
+  * @function  show_error
+  * @abstract  show the error and continue reading the file.
+  * @param     format...   defines the format of the output like printf
+  */
+  void show_error(const char *format, ...);
 
   /**
    * @function true_from_positive
@@ -72,7 +90,7 @@
   char id[64];
   status s;
 }
-%type<s> expr func inst linst algo_b call_params param
+%type<s> func lparams id linst inst call_params param expr
   dofori_b doford_b doforis_b dofords_b
 %token ALGO_B ALGO_E
   IF ELSE DOWHILE DOFORI DOFORIS DOFORD DOFORDS DO REPEAT
@@ -96,7 +114,9 @@
 
 func:
 algo_b '{' lparams '}' linst algo_e {
-  $$ = STATEMENT;
+  if ($3 >= ERR_TYP || $5 >= ERR_TYP) {
+    fail_with("invalid algorithm, exiting...\n");
+  }
 }
 ;
 
@@ -111,38 +131,91 @@ ALGO_B '{' ID '}' {
 ;
 
 lparams:
-%empty
-| id ',' lparams
-| id
+%empty { $$ = STATEMENT; }
+| id ',' lparams {
+  status s = 0;
+  if ((s = $3) >= ERR_TYP || (s = $1) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| id { $$ = $1; }
 ;
 
 id:
 ID {
   if (search_symbol_table($1) != NULL) {
-    fail_with("%s already exist: duplicated variable.\n", $1);
+    $$ = ERR_DEC;
+    show_error("line %d: duplicated var \"%s\".\n", yylineno,$1);
+  } else {
+    $$ = STATEMENT;
+    symbol_table_entry *ste = new_symbol_table_entry($1);
+    ste->add = ++curr_fun->nParams;
+    curr_fun->desc[ste->add] = INT_T;
+    ste->class = PARAMETER;
+    ste->desc[0] = INT_T;
   }
-  symbol_table_entry *ste = new_symbol_table_entry($1);
-  ste->add = ++curr_fun->nParams;
-  curr_fun->desc[ste->add] = INT_T;
-  ste->class = PARAMETER;
-  ste->desc[0] = INT_T;
 }
 ;
 
 algo_e:
 ALGO_E {
-  for(size_t i = 0; i < curr_fun->nParams; i++) {
+  for(size_t i = 0; i < curr_fun->nParams + curr_fun->nLocalVariables; i++) {
     free_first_symbol_table_entry();
   }
 }
 ;
 
 linst:
-  inst { $$ = STATEMENT; }
-| error { yyerrok; }
-| error linst { yyerrok; }
+  inst {
+  if ($1 >= ERR_TYP) {
+    $$ = $1;
+    switch ($1) {
+    case ERR_TYP:
+      yyerror("incompatible types.");
+      break;
+    case ERR_DIV:
+      yyerror("division by 0.");
+      break;
+    case ERR_DEC:
+      yyerror("undeclared variable.");
+      break;
+    default:;
+    }
+    yyerrok;
+  } else {
+    $$ = STATEMENT;
+  }
+}
+| error {
+  $$ = ERR_SYN;
+  yyerrok;
+}
+| error linst {
+  $$ = ERR_SYN;
+  yyerrok;
+}
 | inst linst {
-  $$ = STATEMENT;
+  status s = 0;
+  if ((s = $2) >= ERR_TYP || (s = $1) >= ERR_TYP) {
+    $$ = s;
+    switch (s) {
+    case ERR_TYP:
+      yyerror("incompatible types.");
+      break;
+    case ERR_DIV:
+      yyerror("division by 0.");
+      break;
+    case ERR_DEC:
+      yyerror("undeclared variable.");
+      break;
+    default:;
+    }
+    yyerrok;
+  } else {
+    $$ = STATEMENT;
+  }
 }
 ;
 
@@ -173,7 +246,7 @@ AFFECT '{' ID '}' '{' expr '}' {
   if ((ste = search_symbol_table($3)) == NULL) {
     $$ = ERR_DEC;
   } else {
-    $$ = INT;
+    $$ = STATEMENT;
     load_addr(CX, ste);
     dprintf(fd, "\tloadw ax,cx\n"
                 "\tconst bx,1\n"
@@ -186,7 +259,7 @@ AFFECT '{' ID '}' '{' expr '}' {
   if ((ste = search_symbol_table($3)) == NULL) {
     $$ = ERR_DEC;
   } else {
-    $$ = INT;
+    $$ = STATEMENT;
     load_addr(CX, ste);
     dprintf(fd, "\tloadw ax,cx\n"
                 "\tconst bx,1\n"
@@ -204,7 +277,7 @@ AFFECT '{' ID '}' '{' expr '}' {
 }
 | IF '{' expr '}' if_b linst ELSE else_b if_e linst else_e end FI {
   status s = 0;
-  if ((s = $3) >= ERR_TYP) {
+  if ((s = $3) >= ERR_TYP || (s = $6) >= ERR_TYP || (s = $10) >= ERR_TYP) {
     $$ = s;
   } else {
     $$ = STATEMENT;
@@ -244,7 +317,7 @@ AFFECT '{' ID '}' '{' expr '}' {
 }
 | DOWHILE dowhile_t '{' expr '}' dowhile_b linst dowhile_e end OD {
   status s = 0;
-  if ((s = $4) >= ERR_TYP) {
+  if ((s = $4) >= ERR_TYP || (s = $7) >= ERR_TYP) {
     $$ = s;
   } else {
     $$ = STATEMENT;
@@ -252,7 +325,7 @@ AFFECT '{' ID '}' '{' expr '}' {
 }
 | DO do_b linst WHILEOD '{' expr '}' do_e end {
   status s = 0;
-  if ((s = $6) >= ERR_TYP) {
+  if ((s = $3) >= ERR_TYP || (s = $6) >= ERR_TYP) {
     $$ = s;
   } else {
     $$ = STATEMENT;
@@ -260,25 +333,30 @@ AFFECT '{' ID '}' '{' expr '}' {
 }
 | REPEAT repeat_b linst UNTIL '{' expr '}' repeat_e end {
   status s = 0;
-  if ((s = $6) >= ERR_TYP) {
+  if ((s = $3) >= ERR_TYP || (s = $6) >= ERR_TYP) {
     $$ = s;
   } else {
     $$ = STATEMENT;
   }
 }
 | RETURN '{' expr '}' {
-  --offset;
-  dprintf(fd, "\tpop ax\n");
-  for (size_t i = 0; i < curr_fun->nLocalVariables; i++) {
-    free_first_symbol_table_entry();
-    dprintf(fd, "\tpop dx\n");
+  if ($3 >= ERR_TYP) {
+    $$ = $3;
+  } else {
+    $$ = STATEMENT;
+    --offset;
+    dprintf(fd, "\tpop ax\n");
+    for (size_t i = 0; i < curr_fun->nLocalVariables; i++) {
+      dprintf(fd, "\tpop dx\n");
+    }
+    dprintf(fd, "\tret\n");
   }
-  dprintf(fd, "\tret\n");
 }
 | IGNORE {
   $$ = STATEMENT;
 }
 | INVALID {
+  $$ = ERR_SYN;
   fail_with("Instruction not implementable.\n");
 }
 ;
@@ -363,26 +441,17 @@ dofori_b: '{' ID '}' '{' expr '}' '{' expr '}' {
       dprintf(fd, "\tjmp cx\n"
                   ":%s\n", label_loop);
 
-      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
-      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
-
       // ++
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n"
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n"
                   "\tconst bx,1\n"
                   "\tadd ax,bx\n"
                   "\tstorew ax,cx\n");
       dprintf(fd, ":%s\n", label_start);
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_end);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw bx,cx\n");
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n");
+      load_addr(CX, endval);
+      dprintf(fd, "\tloadw bx,cx\n");
       dprintf(fd, "\tconst cx,%s\n", label_next);
       dprintf(fd, "\tsless bx,ax\n"
                   "\tjmpc cx\n");
@@ -441,34 +510,22 @@ doforis_b: '{' ID '}' '{' expr '}' '{' expr '}' '{' expr '}' {
       dprintf(fd, "\tjmp cx\n"
                   ":%s\n", label_loop);
 
-      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
-      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
-      int delta_step = 2 * (offset + curr_fun->nLocalVariables - (stepval->add));
-
       // LOOP VAR
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n");
+
       // STEP VAL
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_step);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw bx,cx\n");
-      dprintf(fd, "\tadd ax,bx\n"
-                  "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tstorew ax,cx\n");
+      load_addr(BX, stepval);
+      dprintf(fd, "\tloadw bx,bx\n");
+      dprintf(fd, "\tadd ax,bx\n");
+      dprintf(fd, "\tstorew ax,cx\n");
       dprintf(fd, ":%s\n", label_start);
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_end);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw bx,cx\n");
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n");
+      load_addr(CX, endval);
+      dprintf(fd, "\tloadw bx,cx\n");
+
+      // VERIFIY END CONDITION
       dprintf(fd, "\tconst cx,%s\n", label_next);
       dprintf(fd, "\tsless bx,ax\n"
                   "\tjmpc cx\n");
@@ -518,26 +575,17 @@ doford_b: '{' ID '}' '{' expr '}' '{' expr '}' {
       dprintf(fd, "\tjmp cx\n"
                   ":%s\n", label_loop);
 
-      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
-      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
-
       // ++
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n"
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n"
                   "\tconst bx,1\n"
                   "\tsub ax,bx\n"
                   "\tstorew ax,cx\n");
       dprintf(fd, ":%s\n", label_start);
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_end);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw bx,cx\n");
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n");
+      load_addr(CX, endval);
+      dprintf(fd, "\tloadw bx,cx\n");
       dprintf(fd, "\tconst cx,%s\n", label_next);
       dprintf(fd, "\tsless bx,ax\n"
                   "\tjmpc cx\n");
@@ -596,34 +644,22 @@ dofords_b: '{' ID '}' '{' expr '}' '{' expr '}' '{' expr '}' {
       dprintf(fd, "\tjmp cx\n"
                   ":%s\n", label_loop);
 
-      int delta_var = 2 * (offset + curr_fun->nLocalVariables - (var->add));
-      int delta_end = 2 * (offset + curr_fun->nLocalVariables - (endval->add));
-      int delta_step = 2 * (offset + curr_fun->nLocalVariables - (stepval->add));
-
       // LOOP VAR
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n");
+
       // STEP VAL
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_step);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw bx,cx\n");
-      dprintf(fd, "\tsub ax,bx\n"
-                  "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tstorew ax,cx\n");
+      load_addr(BX, stepval);
+      dprintf(fd, "\tloadw bx,bx\n");
+      dprintf(fd, "\tsub ax,bx\n");
+      dprintf(fd, "\tstorew ax,cx\n");
       dprintf(fd, ":%s\n", label_start);
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_var);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw ax,cx\n");
-      dprintf(fd, "\tcp cx,sp\n"
-                  "\tconst bx,%d\n", delta_end);
-      dprintf(fd, "\tsub cx,bx\n"
-                  "\tloadw bx,cx\n");
+      load_addr(CX, var);
+      dprintf(fd, "\tloadw ax,cx\n");
+      load_addr(CX, endval);
+      dprintf(fd, "\tloadw bx,cx\n");
+
+      // VERIFIY END CONDITION
       dprintf(fd, "\tconst cx,%s\n", label_next);
       dprintf(fd, "\tsless bx,ax\n"
                   "\tjmpc cx\n");
@@ -641,8 +677,6 @@ dofor_e: %empty {
   dprintf(fd, "\tconst ax,%s\n", label_loop);
   dprintf(fd, "\tjmp ax\n"
               ":%s\n", label_next);
-
-  dprintf(fd, "; fori end\n");
 }
 ;
 
@@ -739,7 +773,7 @@ call_params:
   $$ = STATEMENT;
 }
 | param ',' call_params {
-  status s;
+  status s = 0;
   --offset;
   if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
     $$ = s;
@@ -762,30 +796,34 @@ param: expr {
 expr :
 CALL '{' ID {
   symbol_table_entry *ste = search_symbol_table($3);
-  if (ste == NULL || ste->class != FUNCTION) {
-    fail_with("invalid name in fun call.\n");
+  if (ste == NULL){
+    $<s>$ = ERR_DEC;
+  } else if (ste->class != FUNCTION) {
+    $<s>$ = ERR_TYP;
   } else {
     push(0);
   }
 } '}' '{' call_params '}' {
-  if ($7 >= ERR_TYP) {
-    $$ = $7;
+  status s = 0;
+  if ((s = $<s>4) >= ERR_TYP || (s = $7) >= ERR_TYP) {
+    $$ = s;
   } else {
     symbol_table_entry *ste = search_symbol_table($3);
     size_t n = pop();
     if (ste->nParams != n) {
-      fail_with("invalid number of parameters in function call\n");
-    }
-    $$ = INT;
+      $$ = ERR_SYN;
+    } else {
+      $$ = INT;
 
-    dprintf(fd, "\tconst ax,%s\n", $3);
-    dprintf(fd, "\tcall ax\n");
+      dprintf(fd, "\tconst ax,%s\n", $3);
+      dprintf(fd, "\tcall ax\n");
 
-    for(size_t i = 0; i < n; ++i) {
-      dprintf(fd, "\tpop dx\n");
+      for(size_t i = 0; i < n; ++i) {
+        dprintf(fd, "\tpop dx\n");
+      }
+      dprintf(fd, "\tpush ax\n");
+      ++offset;
     }
-    dprintf(fd, "\tpush ax\n");
-    ++offset;
   }
 }
 | ID {
@@ -1196,7 +1234,9 @@ void true_from_positive(enum reg r) {
  * @param     s     String defining the error;
  */
 void yyerror(char const *s) {
-  fprintf(stderr, "line %d: %s\n", yylineno, s);
+  int line = yylloc.first_line;
+  int col = yylloc.first_column;
+  fprintf(stderr, C_RED "error" C_RESET ":%d:%d\n  %d | %s\n\n", line, col, line, s);
 }
 
 /**
@@ -1209,20 +1249,35 @@ void free_symbols() {
   }
 }
 
-/**
- * @function  fail_with
- * @abstract  Terminate the program outputing an error like fprintf.
- * @param     format...   defines the format of the output like printf
- */
 void fail_with(const char *format, ...) {
   va_list ap;
   va_start(ap, format);
   vfprintf(stderr, format, ap);
   va_end(ap);
+  if (target_name != NULL) {
+    switch(fork()) {
+    case -1:
+      fprintf(stderr, "error in fork trying to delete target file.\n");
+      break;
+    case 0:;
+      const char* const argv[] = {"/bin/rm", "-f", target_name, NULL};
+
+      execvp(argv[0], (char * const *)argv);
+      fprintf(stderr, "error in fork trying to delete target file.\n");
+      break;
+    default:;
+    }
+  }
   free_symbols();
   exit(EXIT_FAILURE);
 }
 
+void show_error(const char *format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  vfprintf(stderr, format, ap);
+  va_end(ap);
+}
 
 int main(int argc, char **argv) {
   if (argc != 2) {
@@ -1242,6 +1297,7 @@ int main(int argc, char **argv) {
     fail_with("couldn't create file: %s", argv[1]);
     exit(EXIT_FAILURE);
   }
+  target_name = target;
   yyparse();
   free_symbols();
   return 0;
