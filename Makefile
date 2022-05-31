@@ -19,20 +19,16 @@ all: $(EXECS)
 algo2asm: lex.algo2asm.o algo2asm.tab.o stable.o stack.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
-algo2asm.tab.c algo2asm.tab.h: algo2asm.y lex.algo2asm.h
-	# $(YACC) $(YACCOPTS) $< -d -v
-	$(YACC) $(YACCOPTS) $< -d -v --graph
-
 ### run
 
 run: lex.run.o run.tab.o stack.o
 	$(CC) $+ -o $@ $(LDFLAGS)
 
-run.tab.c run.tab.h: run.y lex.run.h
+### others
+
+%.tab.c %.tab.h: %.y lex.%.h
 	# $(YACC) $(YACCOPTS) $< -d -v
 	$(YACC) $(YACCOPTS) $< -d -v --graph
-
-### others
 
 lex.%.c: %.l %.tab.h
 	$(LEX) $(LEXOPTS) -o $@ $<
