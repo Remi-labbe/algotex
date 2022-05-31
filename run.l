@@ -7,11 +7,10 @@
 %option noyywrap
 NUMBER [[:digit:]]+
 ID [[:alpha:]]+[[:alnum:]]*
-PREF "\\"
 %%
 "true"                { return TRUE; }
 "false"               { return FALSE; }
-{PREF}"SIPRO"         { return SIPRO; }
+"\\SIPRO"             { return SIPRO; }
 {NUMBER}              { string_to_int(&yylval.integer, yytext); return NUMBER; }
 {ID}                  { strncpy(yylval.id, yytext, 64); return ID; }
 [[:blank:]]|\n

@@ -29,7 +29,7 @@
 
   #define BUF_SIZE 512
   #define PATTERN "_main.asm"
-  #define PATTERN_LEN_ADD strlen(PATTERN)
+  #define PATTERN_LEN strlen(PATTERN)
 
   extern FILE *yyin;
   static int fd;
@@ -78,8 +78,8 @@ id: ID {
     fail_with("Invalid file: [%s]", fun_file_name);
   }
   size_t fnlen = strlen($1);
-  target_name = malloc(fnlen + PATTERN_LEN_ADD);
-  memset(target_name, 0, fnlen + PATTERN_LEN_ADD);
+  target_name = malloc(fnlen + PATTERN_LEN);
+  memset(target_name, 0, fnlen + PATTERN_LEN);
   strncpy(target_name, $1, fnlen);
   strncpy(target_name + fnlen, PATTERN, strlen(PATTERN) + 1);
   fd = open(target_name, O_RDWR | O_CREAT | O_TRUNC, S_IWUSR | S_IRUSR);
@@ -230,7 +230,7 @@ int main(int argc, char **argv) {
 #ifdef COMPILE_AND_RUN
   int status;
   char compiled_name[128] = {0};
-  strncpy(compiled_name, target_name, strlen(target_name) - PATTERN_LEN_ADD);
+  strncpy(compiled_name, target_name, strlen(target_name) - PATTERN_LEN);
   switch(fork()) {
   case -1:
     fail_with("error first fork.\n");
