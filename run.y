@@ -17,15 +17,42 @@
   #include <sys/wait.h>
   #include "status.h"
   #include "stack.h"
+
   int yylex(void);
   typedef struct yy_buffer_state * YY_BUFFER_STATE;
   extern YY_BUFFER_STATE yy_scan_string(char * str);
   extern void yy_delete_buffer(YY_BUFFER_STATE buffer);
+  enum reg {
+    AX,
+    BX,
+    CX,
+    DX
+  };
+
+  void true_from_positive(enum reg r);
   void yyerror(char const *s);
   void fail_with(const char *format, ...);
   void print_header(void);
   void print_main(void);
   void print_footer(void);
+  // Variables labels [[
+  static unsigned int new_label_number() {
+    static unsigned int current_label_number = 0u;
+    if ( current_label_number == UINT_MAX ) {
+      fail_with("Error: maximum label number reached!\n");
+    }
+    return current_label_number++;
+  }
+  static void create_label(char *buf, size_t buf_size, const char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    if ( vsnprintf(buf, buf_size, format, ap) >= buf_size ) {
+      va_end(ap);
+      fail_with("Error in label generation: size of label exceeds maximum size!\n");
+    }
+    va_end(ap);
+  }
+  // ]]
 
   #define BUF_SIZE 512
   #define PATTERN "_main.asm"
@@ -44,8 +71,13 @@
 %type<id> id
 %token<integer> NUMBER
 %token<id> ID
-%token SIPRO TRUE FALSE
-%left '/'
+%token SIPRO TRUE FALSE NOT
+%left OR
+%left AND
+%left EQ NEQ LTH GTH LEQ GEQ
+%left '+' '-'
+%left '*' TIMES '/'
+%right UNOT
 %right UMINUS
 %start call
 %%
@@ -130,6 +162,62 @@ NUMBER {
 | '(' expr ')' {
   $$ = $2;
 }
+| expr '+' expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tadd ax,bx\n"
+                "\tpush ax\n");
+  }
+}
+| expr '-' expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    if ($1 == INT && $3 == INT) {
+      $$ = INT;
+      dprintf(fd, "\tpop ax\n"
+                  "\tpop bx\n"
+                  "\tsub bx,ax\n"
+                  "\tpush bx\n");
+    } else {
+      $$ = ERR_TYP;
+    }
+  }
+}
+| expr '*' expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tmul ax,bx\n"
+                "\tpush ax\n");
+  }
+}
+| expr TIMES expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || ( s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tmul ax,bx\n"
+                "\tpush ax\n");
+  }
+}
 | expr '/' expr {
   /* keep division to handle fractions */
   status s = 0;
@@ -169,8 +257,251 @@ NUMBER {
     }
   }
 }
+| expr AND expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    true_from_positive(AX);
+    true_from_positive(BX);
+    dprintf(fd, "\tand ax,bx\n"
+                "\tpush ax\n");
+  }
+}
+| expr OR expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    true_from_positive(AX);
+    true_from_positive(BX);
+    dprintf(fd, "\tor ax,bx\n"
+                "\tpush ax\n");
+  }
+}
+| expr EQ expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
+| expr NEQ expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,1\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,0\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
+| expr LTH expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless bx,ax\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
+| expr LEQ expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless bx,ax\n"
+                "\tjmpc dx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
+| expr GTH expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
+| expr GEQ expr {
+
+  status s = 0;
+  if ((s = $1) >= ERR_TYP || (s = $3) >= ERR_TYP) {
+    $$ = s;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tpop bx\n"
+                "\tsless ax,bx\n"
+                "\tjmpc dx\n"
+                "\tcmp ax,bx\n"
+                "\tjmpc dx\n"
+                "\tconst ax,0\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,1\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
+| NOT expr %prec UNOT {
+  if ($2 >= ERR_TYP) {
+    $$ = $2;
+  } else {
+    $$ = INT;
+    int n = new_label_number();
+    char tlabel[LABEL_SIZE] = {0};
+    create_label(tlabel, LABEL_SIZE, "jmptrue%u", n);
+    char nlabel[LABEL_SIZE] = {0};
+    create_label(nlabel, LABEL_SIZE, "jmpnext%u", n);
+    dprintf(fd, "\tconst dx,%s\n", tlabel);
+    dprintf(fd, "\tconst cx,%s\n", nlabel);
+    dprintf(fd, "\tpop ax\n"
+                "\tconst bx,1\n"
+                "\tcmp bx,ax\n"
+                "\tjmpc dx\n"
+                "\tconst ax,1\n"
+                "\tpush ax\n"
+                "\tjmp cx\n");
+    dprintf(fd, ":%s\n", tlabel);
+    dprintf(fd, "\tconst ax,0\n"
+                "\tpush ax\n");
+    dprintf(fd, ":%s\n", nlabel);
+  }
+}
 ;
 %%
+
+void true_from_positive(enum reg r) {
+  char r_str[16] = {0};
+  int n = new_label_number();
+  char label[LABEL_SIZE] = {0};
+
+  switch(r){
+  case AX:
+    snprintf(r_str, sizeof(r_str), "ax");
+    break;
+  case BX:
+    snprintf(r_str, sizeof(r_str), "bx");
+    break;
+  default:
+    fail_with("Can't use this register here!");
+  }
+
+  create_label(label, LABEL_SIZE, "jmp%u", n);
+  dprintf(fd, "\tpop %s\n", r_str);
+  dprintf(fd, "\tconst dx,%s\n", label);
+  dprintf(fd, "\tconst cx,0\n"
+              "\tcmp %s,cx\n", r_str);
+  dprintf(fd, "\tjmpc dx\n"
+              "\tconst %s,1\n", r_str);
+  dprintf(fd, ":%s\n", label);
+}
 
 void yyerror(char const *s) {
   fprintf(stderr, "%s\n", s);
