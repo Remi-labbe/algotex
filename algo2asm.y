@@ -453,7 +453,7 @@ dofori_b: '{' ID '}' '{' expr '}' '{' expr '}' {
       load_addr(CX, endval);
       dprintf(fd, "\tloadw bx,cx\n");
       dprintf(fd, "\tconst cx,%s\n", label_next);
-      dprintf(fd, "\tsless bx,ax\n"
+      dprintf(fd, "\tsless ax,bx\n"
                   "\tjmpc cx\n");
     }
   }
@@ -587,7 +587,7 @@ doford_b: '{' ID '}' '{' expr '}' '{' expr '}' {
       load_addr(CX, endval);
       dprintf(fd, "\tloadw bx,cx\n");
       dprintf(fd, "\tconst cx,%s\n", label_next);
-      dprintf(fd, "\tsless bx,ax\n"
+      dprintf(fd, "\tsless ax,bx\n"
                   "\tjmpc cx\n");
     }
   }
